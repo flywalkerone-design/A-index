@@ -37,9 +37,16 @@ jobs:
           cd 温度计APP/android
           ./gradlew assembleRelease --no-daemon --stacktrace
 
+      - name: Find APK
+        run: |
+          find . -name "*.apk" -type f
+          APK_PATH=$(find . -name "*.apk" -type f | head -1)
+          echo "APK_PATH=$APK_PATH" >> $GITHUB_ENV
+          echo "Found APK: $APK_PATH"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: A-stock-Thermometer
-          path: 温度计APP/android/app/build/outputs/apk/release/app-release.apk
+          path: ${{ env.APK_PATH }}
           retention-days: 30
