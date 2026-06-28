@@ -21,21 +21,21 @@ jobs:
 
       - name: Unzip and copy web files to assets
         run: |
-          unzip 温度计APP.zip -d 温度计APP
-          mkdir -p 温度计APP/android/app/src/main/assets/www/js
-          cp -r 温度计APP/www/* 温度计APP/android/app/src/main/assets/www/
+          unzip 温度计APP.zip -d temp
+          mkdir -p temp/温度计APP/温度计APP/android/app/src/main/assets/www/js
+          cp -r temp/温度计APP/温度计APP/www/* temp/温度计APP/温度计APP/android/app/src/main/assets/www/
 
       - name: Generate Gradle Wrapper
-        working-directory: 温度计APP/android
+        working-directory: temp/温度计APP/温度计APP/android
         run: gradle wrapper --gradle-version 8.5
 
       - name: Build Release APK
-        working-directory: 温度计APP/android
+        working-directory: temp/温度计APP/温度计APP/android
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: A-stock-Thermometer
-          path: 温度计APP/android/app/build/outputs/apk/release/app-release.apk
+          path: temp/温度计APP/温度计APP/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
