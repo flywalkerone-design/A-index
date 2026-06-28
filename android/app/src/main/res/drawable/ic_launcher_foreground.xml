@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 温度计主体 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,20 L64,20 Q68,20 68,24 L68,68 Q68,72 68,76 A16,16 0 1,1 40,76 Q40,72 40,68 L40,24 Q40,20 44,20 Z" />
+    <!-- 温度计水银柱 -->
+    <path
+        android:fillColor="#FF3B30"
+        android:pathData="M48,36 L60,36 Q62,36 62,38 L62,68 Q62,76 54,80 Q46,76 46,68 L46,38 Q46,36 48,36 Z" />
+    <!-- 刻度线 -->
+    <path
+        android:fillColor="#1D1D1F"
+        android:pathData="M42,30 L46,30 L46,32 L42,32 Z" />
+    <path
+        android:fillColor="#1D1D1F"
+        android:pathData="M42,40 L46,40 L46,42 L42,42 Z" />
+    <path
+        android:fillColor="#1D1D1F"
+        android:pathData="M42,50 L46,50 L46,52 L42,52 Z" />
+    <path
+        android:fillColor="#1D1D1F"
+        android:pathData="M42,60 L46,60 L46,62 L42,62 Z" />
+</vector>

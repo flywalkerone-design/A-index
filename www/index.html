@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>A股温度计</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#000;display:flex;justify-content:center;align-items:center;min-height:100vh}
+
+/* 手机壳 */
+.phone{width:390px;height:844px;background:#F5F5F7;border-radius:44px;border:4px solid #1D1D1F;position:relative;overflow:hidden;box-shadow:0 0 0 4px #333,0 20px 60px rgba(0,0,0,0.5)}
+.notch{width:130px;height:30px;background:#1D1D1F;border-radius:0 0 18px 18px;margin:0 auto}
+.screen{height:calc(100% - 30px);display:flex;flex-direction:column;overflow:hidden}
+
+/* 状态栏 */
+.status-bar{display:flex;justify-content:space-between;align-items:center;padding:6px 24px;font-size:12px;font-weight:600;color:#1D1D1F}
+.status-bar .time{font-size:14px;font-weight:700}
+
+/* 页面容器 */
+.pages{flex:1;overflow:hidden;position:relative}
+.page{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:0 16px 16px;display:none}
+.page.active{display:block}
+.page::-webkit-scrollbar{display:none}
+
+/* 底部Tab */
+.bottom-tab{display:flex;background:#fff;border-top:1px solid #E5E5EA;padding:6px 0 env(safe-area-inset-bottom,8px)}
+.btab{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 0;border:none;background:none;cursor:pointer;font-family:inherit}
+.btab-icon{font-size:22px;line-height:1}
+.btab-label{font-size:10px;color:#86868B;font-weight:500}
+.btab.active .btab-label{color:#007AFF;font-weight:600}
+
+/* 页面标题 */
+.page-title{font-size:22px;font-weight:700;color:#1D1D1F;padding:8px 0 12px}
+.page-subtitle{font-size:12px;color:#86868B;font-weight:400;margin-top:2px}
+
+/* 设置按钮 */
+.settings-btn{position:absolute;top:8px;right:16px;width:32px;height:32px;border-radius:50%;background:#fff;border:none;cursor:pointer;font-size:16px;box-shadow:0 1px 4px rgba(0,0,0,0.08);z-index:10;display:flex;align-items:center;justify-content:center}
+
+/* ========== 海报卡片 ========== */
+.poster-card{background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.06);margin-bottom:16px;aspect-ratio:3/4;display:flex;flex-direction:column}
+.poster-inner{padding:24px 20px 20px;flex:1;display:flex;flex-direction:column}
+.poster-header{text-align:center;margin-bottom:16px}
+.poster-header h2{font-size:28px;font-weight:700;color:#1D1D1F}
+.poster-header .date{font-size:13px;color:#86868B;margin-top:2px}
+
+/* 温度条 */
+.temp-bar{width:100%;height:20px;border-radius:10px;background:linear-gradient(to right,#007AFF 0%,#007AFF 10%,#5AC8FA 10%,#5AC8FA 20%,#34C759 20%,#34C759 80%,#FF9500 80%,#FF9500 90%,#FF3B30 90%,#FF3B30 100%)}
+.temp-nums{position:relative;height:14px;margin-top:4px;font-size:10px;color:#86868B}
+.temp-nums span{position:absolute;transform:translateX(-50%)}
+.temp-labels{position:relative;height:14px;margin-top:2px}
+.temp-labels span{position:absolute;font-size:9px;font-weight:500;white-space:nowrap;transform:translateX(-50%)}
+.tl1{left:5%;color:#007AFF}.tl2{left:15%;color:#5AC8FA}.tl3{left:50%;color:#34C759}.tl4{left:85%;color:#FF9500}.tl5{left:95%;color:#FF3B30}
+
+.section-title{font-size:12px;font-weight:600;color:#86868B;margin:12px 0 8px}
+.poster-body{flex:1;display:flex;flex-direction:column;justify-content:center}
+
+/* 主要指数横条卡片 */
+.idx-cards{display:flex;flex-direction:column;gap:8px;flex:1;justify-content:center}
+.idx-card{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-radius:14px;background:#F5F5F7;cursor:pointer}
+.idx-card:active{background:#E5E5EA}
+.idx-name{font-size:16px;font-weight:600;color:#1D1D1F}
+.idx-right{display:flex;align-items:center;gap:8px}
+.idx-temp{font-size:26px;font-weight:700;line-height:1}
+.idx-tag{padding:3px 10px;border-radius:10px;color:#fff;font-weight:600;font-size:11px;white-space:nowrap}
+.idx-sub{font-size:11px;color:#86868B;margin-top:2px}
+
+/* 色块网格 */
+.poster-body .grid{flex:1;align-content:center}
+.grid{display:grid;gap:6px}
+.g2x3{grid-template-columns:repeat(3,1fr)}
+.g4x4{grid-template-columns:repeat(4,1fr)}
+.g-block{border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:8px 2px;min-height:50px;cursor:pointer}
+.g-block .bn{font-size:10px;font-weight:600;text-align:center;line-height:1.2}
+.g-block .bt{font-size:17px;font-weight:700;line-height:1}
+.g-block.lt .bn,.g-block.lt .bt{color:#fff}
+.g-block.dt .bn,.g-block.dt .bt{color:#1D1D1F}
+
+.poster-footer{text-align:center;margin-top:10px}
+.poster-footer .ft1{font-size:10px;color:#86868B}
+.poster-footer .ft2{font-size:11px;color:#1D1D1F;font-weight:500}
+
+/* 下载按钮 */
+.dl-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:12px;border-radius:14px;background:#007AFF;color:#fff;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:12px}
+.dl-btn:active{background:#0066DD;transform:scale(0.98)}
+.dl-btn.done{background:#34C759}
+
+/* ========== 设置面板 ========== */
+.settings-overlay{position:absolute;inset:0;background:rgba(0,0,0,0.4);z-index:100;display:none}
+.settings-overlay.show{display:block}
+.settings-sheet{position:absolute;bottom:0;left:0;right:0;background:#fff;border-radius:20px 20px 0 0;max-height:75%;overflow-y:auto;padding:20px 16px env(safe-area-inset-bottom,20px)}
+.settings-sheet h3{font-size:16px;font-weight:700;margin-bottom:16px;text-align:center}
+.s-group{margin-bottom:14px}
+.s-group-title{font-size:12px;font-weight:600;color:#86868B;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
+.s-group-title button{font-size:11px;color:#007AFF;border:none;background:none;cursor:pointer;font-family:inherit}
+.s-items{display:flex;flex-wrap:wrap;gap:6px}
+.s-item{display:flex;align-items:center;gap:4px;padding:5px 10px;border-radius:8px;background:#F5F5F7;font-size:12px;font-weight:500;cursor:pointer;border:2px solid transparent;transition:all 0.15s;user-select:none}
+.s-item.on{background:#E8F4FD;border-color:#007AFF;color:#007AFF}
+.s-item .ck{width:16px;height:16px;border-radius:4px;border:2px solid #C7C7CC;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;transition:all 0.15s}
+.s-item.on .ck{background:#007AFF;border-color:#007AFF}
+.s-actions{display:flex;gap:8px;margin-top:16px}
+.s-actions button{flex:1;padding:11px;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;border:none}
+.s-save{background:#007AFF;color:#fff}
+.s-reset{background:#F5F5F7;color:#1D1D1F}
+.s-close{position:absolute;top:12px;right:16px;width:28px;height:28px;border-radius:50%;background:#E5E5EA;border:none;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center}
+
+/* 详情页 */
+.detail-back{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border-radius:10px;background:#fff;border:none;font-size:13px;font-weight:500;cursor:pointer;color:#007AFF;font-family:inherit;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:10px}
+
+/* 详情温度条 */
+.d-temp-bar{background:#fff;border-radius:14px;padding:14px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,0.04)}
+.d-bar{width:100%;height:20px;border-radius:10px;background:linear-gradient(to right,#007AFF 0%,#007AFF 10%,#5AC8FA 10%,#5AC8FA 20%,#34C759 20%,#34C759 80%,#FF9500 80%,#FF9500 90%,#FF3B30 90%,#FF3B30 100%)}
+.d-nums{position:relative;height:14px;margin-top:4px;font-size:10px;color:#86868B}
+.d-nums span{position:absolute;transform:translateX(-50%)}
+.d-labels{position:relative;height:14px;margin-top:2px}
+.d-labels span{position:absolute;font-size:9px;font-weight:500;white-space:nowrap;transform:translateX(-50%)}
+.dl1{left:5%;color:#007AFF}.dl2{left:15%;color:#5AC8FA}.dl3{left:50%;color:#34C759}.dl4{left:85%;color:#FF9500}.dl5{left:95%;color:#FF3B30}
+
+.d-cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px}
+.d-card{background:#fff;border-radius:12px;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.04)}
+.d-card .v{font-size:20px;font-weight:700}
+.d-card .l{font-size:10px;color:#86868B;margin-top:2px}
+.d-card .c{font-size:11px;font-weight:600;margin-top:2px}
+.d-card .up{color:#FF3B30}.d-card .dn{color:#34C759}
+
+.d-section{background:#fff;border-radius:14px;padding:14px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,0.04)}
+.d-section h3{font-size:13px;font-weight:600;margin-bottom:8px}
+.d-chart{height:200px}
+.d-grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.d-table{width:100%;border-collapse:collapse}
+.d-table th,.d-table td{padding:5px 6px;text-align:left;font-size:11px;border-bottom:1px solid #F5F5F7}
+.d-table th{color:#86868B;font-weight:500;width:40%}
+.d-table td{color:#1D1D1F;font-weight:600}
+.d-rank{display:grid;gap:6px;margin-bottom:10px}
+.d-rank-pill{background:#F5F5F7;border-radius:8px;padding:6px 4px;text-align:center}
+.d-rank-pill .rn{font-size:10px;color:#86868B;margin-bottom:2px}
+.d-rank-pill .rv{font-size:14px;font-weight:700;color:#1D1D1F}
+
+/* Toast */
+.toast{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.75);color:#fff;padding:12px 24px;border-radius:12px;font-size:14px;font-weight:600;z-index:200;display:none;pointer-events:none}
+
+/* 模式切换 */
+.mode-bar{display:flex;gap:6px;justify-content:center;padding:4px 0}
+.mode-btn{padding:4px 12px;border-radius:8px;font-size:11px;font-weight:600;border:1px solid #E5E5EA;background:#fff;color:#86868B;cursor:pointer;font-family:inherit}
+.mode-btn.active{background:#007AFF;color:#fff;border-color:#007AFF}
+</style>
+</head>
+<body>
+
+<div class="phone">
+<div class="notch"></div>
+<div class="screen">
+    <div class="status-bar">
+        <span class="time" id="clock">9:41</span>
+        <span>📶 🔋</span>
+    </div>
+
+    <div class="pages">
+        <!-- ===== 主页：三张海报 ===== -->
+        <div class="page active" id="pageHome">
+            <div style="position:relative">
+                <div class="page-title">A股温度计 <span class="page-subtitle" id="homeDate"></span></div>
+                <button class="settings-btn" onclick="App.openSettings()">⚙️</button>
+            </div>
+
+            <!-- 海报1：主要指数 -->
+            <div class="poster-card" id="posterMain">
+                <div class="poster-inner">
+                    <div class="poster-header">
+                        <h2>A股温度计</h2>
+                        <div class="date" id="posterDate1"></div>
+                    </div>
+                    <div class="temp-bar"></div>
+                    <div class="temp-nums"><span style="left:0%">0</span><span style="left:10%">10</span><span style="left:20%">20</span><span style="left:80%">80</span><span style="left:90%">90</span><span style="left:100%">100</span></div>
+                    <div class="temp-labels">
+                        <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
+                    </div>
+                    <div class="poster-body">
+                        <div class="section-title">主要指数</div>
+                        <div class="idx-cards" id="mainCards"></div>
+                    </div>
+                    <div class="poster-footer">
+                        <div class="ft1">今日市场情绪播报 | 投资有风险，入市需谨慎</div>
+                        <div class="ft2">觉得有用欢迎点赞关注</div>
+                    </div>
+                </div>
+            </div>
+            <button class="dl-btn" onclick="App.downloadPoster('posterMain','A股温度计_主要指数')">📥 下载主要指数海报</button>
+
+            <!-- 海报2：站在光里 -->
+            <div class="poster-card" id="posterLight">
+                <div class="poster-inner">
+                    <div class="poster-header">
+                        <h2>A股温度计</h2>
+                        <div class="date" id="posterDate2"></div>
+                    </div>
+                    <div class="temp-bar"></div>
+                    <div class="temp-nums"><span style="left:0%">0</span><span style="left:10%">10</span><span style="left:20%">20</span><span style="left:80%">80</span><span style="left:90%">90</span><span style="left:100%">100</span></div>
+                    <div class="temp-labels">
+                        <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
+                    </div>
+                    <div class="poster-body">
+                        <div class="section-title">站在光里</div>
+                        <div class="grid g2x3" id="lightGrid"></div>
+                    </div>
+                    <div class="poster-footer">
+                        <div class="ft1">今日市场情绪播报 | 投资有风险，入市需谨慎</div>
+                        <div class="ft2">觉得有用欢迎点赞关注</div>
+                    </div>
+                </div>
+            </div>
+            <button class="dl-btn" onclick="App.downloadPoster('posterLight','A股温度计_站在光里')">📥 下载站在光里海报</button>
+
+            <!-- 海报3：主题行业 -->
+            <div class="poster-card" id="posterSector">
+                <div class="poster-inner">
+                    <div class="poster-header">
+                        <h2>A股温度计</h2>
+                        <div class="date" id="posterDate3"></div>
+                    </div>
+                    <div class="temp-bar"></div>
+                    <div class="temp-nums"><span style="left:0%">0</span><span style="left:10%">10</span><span style="left:20%">20</span><span style="left:80%">80</span><span style="left:90%">90</span><span style="left:100%">100</span></div>
+                    <div class="temp-labels">
+                        <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
+                    </div>
+                    <div class="poster-body">
+                        <div class="section-title">主题行业</div>
+                        <div class="grid g4x4" id="sectorGrid"></div>
+                    </div>
+                    <div class="poster-footer">
+                        <div class="ft1">今日市场情绪播报 | 投资有风险，入市需谨慎</div>
+                        <div class="ft2">觉得有用欢迎点赞关注</div>
+                    </div>
+                </div>
+            </div>
+            <button class="dl-btn" onclick="App.downloadPoster('posterSector','A股温度计_主题行业')">📥 下载主题行业海报</button>
+
+            <!-- 海报4：SmartBeta -->
+            <div class="poster-card" id="posterSmart">
+                <div class="poster-inner">
+                    <div class="poster-header">
+                        <h2>SmartBeta</h2>
+                        <div class="date" id="posterDate4"></div>
+                    </div>
+                    <div class="temp-bar"></div>
+                    <div class="temp-nums"><span style="left:0%">0</span><span style="left:10%">10</span><span style="left:20%">20</span><span style="left:80%">80</span><span style="left:90%">90</span><span style="left:100%">100</span></div>
+                    <div class="temp-labels">
+                        <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
+                    </div>
+                    <div class="poster-body">
+                        <div class="idx-cards" id="smartCards"></div>
+                    </div>
+                    <div class="poster-footer">
+                        <div class="ft1">今日市场情绪播报 | 投资有风险，入市需谨慎</div>
+                        <div class="ft2">觉得有用欢迎点赞关注</div>
+                    </div>
+                </div>
+            </div>
+            <button class="dl-btn" onclick="App.downloadPoster('posterSmart','SmartBeta')">📥 下载SmartBeta海报</button>
+        </div>
+
+        <!-- ===== 全部指数Tab ===== -->
+        <div class="page" id="pageAll">
+            <div class="page-title">全部指数</div>
+            <div class="section-title">主要指数</div>
+            <div class="idx-cards" id="allMain"></div>
+            <div class="section-title">站在光里</div>
+            <div class="grid g2x3" id="allLight" style="margin-bottom:12px"></div>
+            <div class="section-title">SmartBeta</div>
+            <div class="idx-cards" id="allSmart" style="margin-bottom:12px"></div>
+            <div class="section-title">主题行业</div>
+            <div class="grid g4x4" id="allSector"></div>
+        </div>
+
+        <!-- ===== 详情Tab ===== -->
+        <div class="page" id="pageDetail">
+            <div id="detailContent"></div>
+        </div>
+    </div>
+
+    <!-- 底部导航 -->
+    <div class="bottom-tab">
+        <button class="btab active" onclick="App.switchTab('home')"><div class="btab-icon">🏠</div><div class="btab-label">海报</div></button>
+        <button class="btab" onclick="App.switchTab('all')"><div class="btab-icon">📊</div><div class="btab-label">全部</div></button>
+        <button class="btab" onclick="App.switchTab('detail')"><div class="btab-icon">📈</div><div class="btab-label">详情</div></button>
+    </div>
+
+    <!-- 设置面板 -->
+    <div class="settings-overlay" id="settingsOverlay" onclick="App.closeSettings(event)">
+        <div class="settings-sheet" onclick="event.stopPropagation()">
+            <button class="s-close" onclick="App.closeSettings()">✕</button>
+            <h3>自定义指数</h3>
+            <div id="settingsBody"></div>
+            <div class="s-actions">
+                <button class="s-save" onclick="App.saveCfg()">💾 保存</button>
+                <button class="s-reset" onclick="App.resetCfg()">🔄 默认</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 加载遮罩 -->
+    <div id="loadingOverlay" style="position:absolute;inset:0;background:rgba(245,245,247,0.95);z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px">
+        <div style="width:36px;height:36px;border:3px solid #E5E5EA;border-top-color:#007AFF;border-radius:50%;animation:spin 0.8s linear infinite"></div>
+        <div style="font-size:14px;color:#86868B;font-weight:500" id="loadingText">正在获取市场数据...</div>
+        <div style="font-size:11px;color:#AEAEB2">首次加载约需30秒</div>
+    </div>
+    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+
+    <div class="toast" id="toast"></div>
+</div>
+</div>
+
+<!-- 加载 JS 模块 -->
+<script src="js/config.js"></script>
+<script src="js/indicators.js"></script>
+<script src="js/scoring.js"></script>
+<script src="js/fetch.js"></script>
+<script src="js/app.js"></script>
+
+<script>
+// 初始化
+App.init();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# A股温度计 - JS前端版 依赖
+# 只需要 Flask 和 flask-cors（代理服务器用）
+# 前端 JS 零依赖
+
+flask>=2.0
+flask-cors>=3.0
+requests>=2.28
+pandas>=1.5
+numpy>=1.23
+loguru>=0.6

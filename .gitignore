@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data caches (too large for git)
+data/index_cache/
+data/ifind_margin_cache/
+data/api_data_cache.json
+
+# Logs
+output/logs/
+
+# Gradle build output
+android/.gradle/
+android/app/build/
+android/build/
+
+# Token (sensitive)
+ifind_token.txt

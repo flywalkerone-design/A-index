@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>A股温度计</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#000;display:flex;justify-content:center;align-items:center;min-height:100vh}
+
+/* 手机壳 */
+.phone{width:390px;height:844px;background:#F5F5F7;border-radius:44px;border:4px solid #1D1D1F;position:relative;overflow:hidden;box-shadow:0 0 0 4px #333,0 20px 60px rgba(0,0,0,0.5)}
+.notch{width:130px;height:30px;background:#1D1D1F;border-radius:0 0 18px 18px;margin:0 auto}
+.screen{height:calc(100% - 30px);display:flex;flex-direction:column;overflow:hidden}
+
+/* 状态栏 */
+.status-bar{display:flex;justify-content:space-between;align-items:center;padding:6px 24px;font-size:12px;font-weight:600;color:#1D1D1F}
+.status-bar .time{font-size:14px;font-weight:700}
+
+/* 页面容器 */
+.pages{flex:1;overflow:hidden;position:relative}
+.page{position:absolute;inset:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:0 16px 16px;display:none}
+.page.active{display:block}
+.page::-webkit-scrollbar{display:none}
+
+/* 底部Tab */
+.bottom-tab{display:flex;background:#fff;border-top:1px solid #E5E5EA;padding:6px 0 env(safe-area-inset-bottom,8px)}
+.btab{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 0;border:none;background:none;cursor:pointer;font-family:inherit}
+.btab-icon{font-size:22px;line-height:1}
+.btab-label{font-size:10px;color:#86868B;font-weight:500}
+.btab.active .btab-label{color:#007AFF;font-weight:600}
+
+/* 页面标题 */
+.page-title{font-size:22px;font-weight:700;color:#1D1D1F;padding:8px 0 12px}
+.page-subtitle{font-size:12px;color:#86868B;font-weight:400;margin-top:2px}
+
+/* 设置按钮 */
+.settings-btn{position:absolute;top:8px;right:16px;width:32px;height:32px;border-radius:50%;background:#fff;border:none;cursor:pointer;font-size:16px;box-shadow:0 1px 4px rgba(0,0,0,0.08);z-index:10;display:flex;align-items:center;justify-content:center}
+
+/* ========== 海报卡片（可下载，固定3:4比例） ========== */
+.poster-card{background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.06);margin-bottom:16px;aspect-ratio:3/4;display:flex;flex-direction:column}
+.poster-inner{padding:24px 20px 20px;flex:1;display:flex;flex-direction:column}
+.poster-header{text-align:center;margin-bottom:16px}
+.poster-header h2{font-size:28px;font-weight:700;color:#1D1D1F}
+.poster-header .date{font-size:13px;color:#86868B;margin-top:2px}
+
+/* 温度条 */
+.temp-bar{width:100%;height:20px;border-radius:10px;background:linear-gradient(to right,#007AFF 0%,#007AFF 10%,#5AC8FA 10%,#5AC8FA 20%,#34C759 20%,#34C759 80%,#FF9500 80%,#FF9500 90%,#FF3B30 90%,#FF3B30 100%)}
+.temp-nums{display:flex;justify-content:space-between;padding:4px 0;font-size:10px;color:#86868B}
+.temp-labels{display:flex;margin-top:2px}
+.temp-labels span{text-align:center;font-size:9px;font-weight:500;white-space:nowrap}
+.tl1{width:10%;color:#007AFF}.tl2{width:10%;color:#5AC8FA}.tl3{width:60%;color:#34C759}.tl4{width:10%;color:#FF9500}.tl5{width:10%;color:#FF3B30}
+
+.section-title{font-size:12px;font-weight:600;color:#86868B;margin:12px 0 8px}
+.poster-body{flex:1;display:flex;flex-direction:column;justify-content:center}
+
+/* 主要指数横条卡片 */
+.idx-cards{display:flex;flex-direction:column;gap:8px;flex:1;justify-content:center}
+.idx-card{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-radius:14px;background:#F5F5F7}
+.idx-name{font-size:16px;font-weight:600;color:#1D1D1F}
+.idx-right{display:flex;align-items:center;gap:8px}
+.idx-temp{font-size:26px;font-weight:700;line-height:1}
+.idx-tag{padding:3px 10px;border-radius:10px;color:#fff;font-weight:600;font-size:11px;white-space:nowrap}
+.idx-sub{font-size:11px;color:#86868B;margin-top:2px}
+
+/* 色块网格 */
+.poster-body .grid{flex:1;align-content:center}
+.grid{display:grid;gap:6px}
+.g2x3{grid-template-columns:repeat(3,1fr)}
+.g4x4{grid-template-columns:repeat(4,1fr)}
+.g-block{border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:8px 2px;min-height:50px}
+.g-block .bn{font-size:10px;font-weight:600;text-align:center;line-height:1.2}
+.g-block .bt{font-size:17px;font-weight:700;line-height:1}
+.g-block.lt .bn,.g-block.lt .bt{color:#fff}
+.g-block.dt .bn,.g-block.dt .bt{color:#1D1D1F}
+
+.poster-footer{text-align:center;margin-top:10px}
+.poster-footer .ft1{font-size:10px;color:#86868B}
+.poster-footer .ft2{font-size:11px;color:#1D1D1F;font-weight:500}
+
+/* 下载按钮 */
+.dl-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:12px;border-radius:14px;background:#007AFF;color:#fff;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:12px}
+.dl-btn:active{background:#0066DD;transform:scale(0.98)}
+.dl-btn.done{background:#34C759}
+
+/* ========== 设置面板 ========== */
+.settings-overlay{position:absolute;inset:0;background:rgba(0,0,0,0.4);z-index:100;display:none}
+.settings-overlay.show{display:block}
+.settings-sheet{position:absolute;bottom:0;left:0;right:0;background:#fff;border-radius:20px 20px 0 0;max-height:75%;overflow-y:auto;padding:20px 16px env(safe-area-inset-bottom,20px)}
+.settings-sheet h3{font-size:16px;font-weight:700;margin-bottom:16px;text-align:center}
+.s-group{margin-bottom:14px}
+.s-group-title{font-size:12px;font-weight:600;color:#86868B;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
+.s-group-title button{font-size:11px;color:#007AFF;border:none;background:none;cursor:pointer;font-family:inherit}
+.s-items{display:flex;flex-wrap:wrap;gap:6px}
+.s-item{display:flex;align-items:center;gap:4px;padding:5px 10px;border-radius:8px;background:#F5F5F7;font-size:12px;font-weight:500;cursor:pointer;border:2px solid transparent;transition:all 0.15s;user-select:none}
+.s-item.on{background:#E8F4FD;border-color:#007AFF;color:#007AFF}
+.s-item .ck{width:16px;height:16px;border-radius:4px;border:2px solid #C7C7CC;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;transition:all 0.15s}
+.s-item.on .ck{background:#007AFF;border-color:#007AFF}
+.s-actions{display:flex;gap:8px;margin-top:16px}
+.s-actions button{flex:1;padding:11px;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;border:none}
+.s-save{background:#007AFF;color:#fff}
+.s-reset{background:#F5F5F7;color:#1D1D1F}
+.s-close{position:absolute;top:12px;right:16px;width:28px;height:28px;border-radius:50%;background:#E5E5EA;border:none;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center}
+
+/* 详情页 */
+.detail-back{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border-radius:10px;background:#fff;border:none;font-size:13px;font-weight:500;cursor:pointer;color:#007AFF;font-family:inherit;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:10px}
+
+/* 详情温度条 — 与海报一致，无指针 */
+.d-temp-bar{background:#fff;border-radius:14px;padding:14px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,0.04)}
+.d-bar{width:100%;height:20px;border-radius:10px;background:linear-gradient(to right,#007AFF 0%,#007AFF 10%,#5AC8FA 10%,#5AC8FA 20%,#34C759 20%,#34C759 80%,#FF9500 80%,#FF9500 90%,#FF3B30 90%,#FF3B30 100%)}
+.d-nums{display:flex;justify-content:space-between;padding:4px 0;font-size:10px;color:#86868B}
+.d-labels{display:flex;margin-top:2px}
+.d-labels span{text-align:center;font-size:9px;font-weight:500;white-space:nowrap}
+.dl1{width:10%;color:#007AFF}.dl2{width:10%;color:#5AC8FA}.dl3{width:60%;color:#34C759}.dl4{width:10%;color:#FF9500}.dl5{width:10%;color:#FF3B30}
+
+.d-cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px}
+.d-card{background:#fff;border-radius:12px;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.04)}
+.d-card .v{font-size:20px;font-weight:700}
+.d-card .l{font-size:10px;color:#86868B;margin-top:2px}
+.d-card .c{font-size:11px;font-weight:600;margin-top:2px}
+.d-card .up{color:#FF3B30}.d-card .dn{color:#34C759}
+
+.d-section{background:#fff;border-radius:14px;padding:14px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,0.04)}
+.d-section h3{font-size:13px;font-weight:600;margin-bottom:8px}
+.d-chart{height:200px}
+.d-chart-sm{height:140px}
+.d-grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.d-table{width:100%;border-collapse:collapse}
+.d-table th,.d-table td{padding:5px 6px;text-align:left;font-size:11px;border-bottom:1px solid #F5F5F7}
+.d-table th{color:#86868B;font-weight:500;width:40%}
+.d-table td{color:#1D1D1F;font-weight:600}
+.d-rank{display:grid;gap:6px;margin-bottom:10px}
+.d-rank-pill{background:#F5F5F7;border-radius:8px;padding:6px 4px;text-align:center}
+.d-rank-pill .rn{font-size:10px;color:#86868B;margin-bottom:2px}
+.d-rank-pill .rv{font-size:14px;font-weight:700;color:#1D1D1F}
+
+/* Toast */
+.toast{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.75);color:#fff;padding:12px 24px;border-radius:12px;font-size:14px;font-weight:600;z-index:200;display:none;pointer-events:none}
+</style>
+</head>
+<body>
+
+<div class="phone">
+<div class="notch"></div>
+<div class="screen">
+    <div class="status-bar">
+        <span class="time" id="clock">9:41</span>
+        <span>📶 🔋</span>
+    </div>
+
+    <div class="pages">
+        <!-- ===== 主页：三张海报 ===== -->
+        <div class="page active" id="pageHome">
+            <div style="position:relative">
+                <div class="page-title">A股温度计 <span class="page-subtitle" id="homeDate"></span></div>
+                <button class="settings-btn" onclick="openSettings()">⚙️</button>
+            </div>
+
+            <!-- 海报1：主要指数 -->
+            <div class="poster-card" id="posterMain">
+                <div class="poster-inner">
+                    <div class="poster-header">
+                        <h2>A股温度计</h2>
+                        <div class="date" id="posterDate1"></div>
+                    </div>
+                    <div class="temp-bar"></div>
+                    <div class="temp-nums"><span>0</span><span>10</span><span>20</span><span>80</span><span>90</span><span>100</span></div>
+                    <div class="temp-labels">
+                        <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
+                    </div>
+                    <div class="poster-body">
+                        <div class="section-title">主要指数</div>
+                        <div class="idx-cards" id="mainCards"></div>
+                    </div>
+                    <div class="poster-footer">
+                        <div class="ft1">今日市场情绪播报 | 投资有风险，入市需谨慎</div>
+                        <div class="ft2">觉得有用欢迎点赞关注</div>
+                    </div>
+                </div>
+            </div>
+            <button class="dl-btn" onclick="downloadPoster('posterMain','A股温度计_主要指数')">📥 下载主要指数海报</button>
+
+            <!-- 海报2：站在光里 -->
+            <div class="poster-card" id="posterLight">
+                <div class="poster-inner">
+                    <div class="poster-header">
+                        <h2>A股温度计</h2>
+                        <div class="date" id="posterDate2"></div>
+                    </div>
+                    <div class="temp-bar"></div>
+                    <div class="temp-nums"><span>0</span><span>10</span><span>20</span><span>80</span><span>90</span><span>100</span></div>
+                    <div class="temp-labels">
+                        <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
+                    </div>
+                    <div class="poster-body">
+                        <div class="section-title">站在光里</div>
+                        <div class="grid g2x3" id="lightGrid"></div>
+                    </div>
+                    <div class="poster-footer">
+                        <div class="ft1">今日市场情绪播报 | 投资有风险，入市需谨慎</div>
+                        <div class="ft2">觉得有用欢迎点赞关注</div>
+                    </div>
+                </div>
+            </div>
+            <button class="dl-btn" onclick="downloadPoster('posterLight','A股温度计_站在光里')">📥 下载站在光里海报</button>
+
+            <!-- 海报3：主题行业 -->
+            <div class="poster-card" id="posterSector">
+                <div class="poster-inner">
+                    <div class="poster-header">
+                        <h2>A股温度计</h2>
+                        <div class="date" id="posterDate3"></div>
+                    </div>
+                    <div class="temp-bar"></div>
+                    <div class="temp-nums"><span>0</span><span>10</span><span>20</span><span>80</span><span>90</span><span>100</span></div>
+                    <div class="temp-labels">
+                        <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
+                    </div>
+                    <div class="poster-body">
+                        <div class="section-title">主题行业</div>
+                        <div class="grid g4x4" id="sectorGrid"></div>
+                    </div>
+                    <div class="poster-footer">
+                        <div class="ft1">今日市场情绪播报 | 投资有风险，入市需谨慎</div>
+                        <div class="ft2">觉得有用欢迎点赞关注</div>
+                    </div>
+                </div>
+            </div>
+            <button class="dl-btn" onclick="downloadPoster('posterSector','A股温度计_主题行业')">📥 下载主题行业海报</button>
+
+            <!-- 海报4：SmartBeta -->
+            <div class="poster-card" id="posterSmart">
+                <div class="poster-inner">
+                    <div class="poster-header">
+                        <h2>SmartBeta</h2>
+                        <div class="date" id="posterDate4"></div>
+                    </div>
+                    <div class="temp-bar"></div>
+                    <div class="temp-nums"><span>0</span><span>10</span><span>20</span><span>80</span><span>90</span><span>100</span></div>
+                    <div class="temp-labels">
+                        <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
+                    </div>
+                    <div class="poster-body">
+                        <div class="idx-cards" id="smartCards"></div>
+                    </div>
+                    <div class="poster-footer">
+                        <div class="ft1">今日市场情绪播报 | 投资有风险，入市需谨慎</div>
+                        <div class="ft2">觉得有用欢迎点赞关注</div>
+                    </div>
+                </div>
+            </div>
+            <button class="dl-btn" onclick="downloadPoster('posterSmart','SmartBeta')">📥 下载SmartBeta海报</button>
+        </div>
+
+        <!-- ===== 全部指数Tab ===== -->
+        <div class="page" id="pageAll">
+            <div class="page-title">全部指数</div>
+            <div class="section-title">主要指数</div>
+            <div class="idx-cards" id="allMain"></div>
+            <div class="section-title">站在光里</div>
+            <div class="grid g2x3" id="allLight" style="margin-bottom:12px"></div>
+            <div class="section-title">SmartBeta</div>
+            <div class="idx-cards" id="allSmart" style="margin-bottom:12px"></div>
+            <div class="section-title">主题行业</div>
+            <div class="grid g4x4" id="allSector"></div>
+        </div>
+
+        <!-- ===== 详情Tab ===== -->
+        <div class="page" id="pageDetail">
+            <div id="detailContent"></div>
+        </div>
+    </div>
+
+    <!-- 底部导航 -->
+    <div class="bottom-tab">
+        <button class="btab active" onclick="switchTab('home')"><div class="btab-icon">🏠</div><div class="btab-label">海报</div></button>
+        <button class="btab" onclick="switchTab('all')"><div class="btab-icon">📊</div><div class="btab-label">全部</div></button>
+        <button class="btab" onclick="switchTab('detail')"><div class="btab-icon">📈</div><div class="btab-label">详情</div></button>
+    </div>
+
+    <!-- 设置面板 -->
+    <div class="settings-overlay" id="settingsOverlay" onclick="closeSettings(event)">
+        <div class="settings-sheet" onclick="event.stopPropagation()">
+            <button class="s-close" onclick="closeSettings()">✕</button>
+            <h3>自定义指数</h3>
+            <div id="settingsBody"></div>
+            <div class="s-actions">
+                <button class="s-save" onclick="saveCfg()">💾 保存</button>
+                <button class="s-reset" onclick="resetCfg()">🔄 默认</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 加载遮罩 -->
+    <div id="loadingOverlay" style="position:absolute;inset:0;background:rgba(245,245,247,0.95);z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px">
+        <div style="width:36px;height:36px;border:3px solid #E5E5EA;border-top-color:#007AFF;border-radius:50%;animation:spin 0.8s linear infinite"></div>
+        <div style="font-size:14px;color:#86868B;font-weight:500">正在获取市场数据...</div>
+        <div style="font-size:11px;color:#AEAEB2">首次加载约需30秒</div>
+    </div>
+    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+
+    <div class="toast" id="toast"></div>
+</div>
+</div>
+
+<script>
+// ━━━ 数据存储（从API获取） ━━━
+var API_DATA = null;  // API原始响应
+var DATA = {};        // code -> index data 映射
+
+// ━━━ 指数定义（用于设置面板） ━━━
+var IDX = [
+    {c:"000001",d:"上证指数",g:"main"},{c:"399102",d:"创业板",g:"main"},
+    {c:"000680",d:"科创综指",g:"main"},{c:"899050",d:"北证50",g:"main"},
+    {c:"931723",d:"CPO",g:"light"},{c:"000685",d:"科创芯片",g:"light"},
+    {c:"950125",d:"半导体设备",g:"light"},{c:"885959",d:"PCB",g:"light"},
+    {c:"886042",d:"存储",g:"light"},{c:"886084",d:"光纤",g:"light"},
+    {c:"H11059",d:"工业有色",g:"sector"},{c:"931994",d:"电网设备",g:"sector"},
+    {c:"930986",d:"金融科技",g:"sector"},{c:"399998",d:"煤炭",g:"sector"},
+    {c:"H30590",d:"机器人",g:"sector"},{c:"931594",d:"卫星",g:"sector"},
+    {c:"399808",d:"新能源",g:"sector"},{c:"931152",d:"创新药",g:"sector"},
+    {c:"886099",d:"AI应用",g:"sector"},{c:"881267",d:"锂矿",g:"sector"},
+    {c:"930901",d:"动漫游戏",g:"sector"},{c:"000813",d:"化工",g:"sector"},
+    {c:"885525",d:"白酒",g:"sector"},{c:"931719",d:"电池",g:"sector"},
+    {c:"931238",d:"黄金股",g:"sector"},{c:"881145",d:"电力",g:"sector"},
+    {c:"H30269",d:"红利低波",g:"smart"},{c:"980092",d:"自由现金流",g:"smart"},
+    {c:"883418",d:"微盘股",g:"smart"}
+];
+
+// ━━━ 配置 ━━━
+var SK="a_stock_cfg_v3";
+function loadCfg(){
+    try{var s=localStorage.getItem(SK);if(s){var c=JSON.parse(s);if(c.en&&c.ord)return c}}catch(e){}
+    return{en:IDX.map(function(x){return x.c}),ord:IDX.map(function(x){return x.c})}
+}
+var cfg=loadCfg();
+
+function vis(){
+    return cfg.ord.filter(function(c){return cfg.en.indexOf(c)>=0}).map(function(c){
+        for(var i=0;i<IDX.length;i++)if(IDX[i].c===c)return IDX[i];return null
+    }).filter(Boolean)
+}
+
+// ━━━ 从API获取数据 ━━━
+function fetchData(force){
+    var loading=document.getElementById("loadingOverlay");
+    if(loading)loading.style.display="flex";
+
+    var url="/api/data"+(force?"?force=1":"");
+    fetch(url).then(function(r){return r.json()}).then(function(res){
+        API_DATA=res;
+        // 构建 DATA 映射
+        DATA={};
+        if(res.indices){
+            res.indices.forEach(function(x){DATA[x.code]=x});
+        }
+        if(loading)loading.style.display="none";
+        renderPosters();
+        renderAll();
+        if(res.errors&&res.errors.length>0){
+            console.warn("数据获取警告:",res.errors);
+        }
+    }).catch(function(err){
+        if(loading)loading.style.display="none";
+        showToast("❌ 数据获取失败");
+        console.error(err);
+    });
+}
+
+// ━━━ 时钟 ━━━
+function tickClock(){var d=new Date();document.getElementById("clock").textContent=d.getHours()+":"+String(d.getMinutes()).padStart(2,"0")}
+tickClock();setInterval(tickClock,30000);
+
+// ━━━ 日期 ━━━
+function todayStr(){var d=new Date();return d.getFullYear()+"年"+String(d.getMonth()+1).padStart(2,"0")+"月"+String(d.getDate()).padStart(2,"0")+"日"}
+
+// ━━━ 渲染海报 ━━━
+function renderPosters(){
+    var v=vis(),ds=todayStr();
+    document.getElementById("homeDate").textContent=ds;
+    ["posterDate1","posterDate2","posterDate3","posterDate4"].forEach(function(id){document.getElementById(id).textContent=ds});
+
+    // 主要指数
+    var mainV=v.filter(function(x){return x.g==="main"&&DATA[x.c]});
+    var mc="";
+    mainV.forEach(function(x){
+        var d=DATA[x.c],ec=d.emotionColor||"#34C759",el=d.emotion||"中性";
+        mc+='<div class="idx-card" onclick="showDetail(\''+x.c+'\')"><div class="idx-name">'+x.d+'</div><div class="idx-right"><div class="idx-temp" style="color:'+ec+'">'+d.score+'°</div><div class="idx-tag" style="background:'+ec+'">'+el+'</div></div></div>'
+    });
+    document.getElementById("mainCards").innerHTML=mc||'<div style="text-align:center;color:#86868B;padding:20px">加载中...</div>';
+
+    // 站在光里
+    var lightV=v.filter(function(x){return x.g==="light"&&DATA[x.c]}).sort(function(a,b){return DATA[a.c].score-DATA[b.c].score});
+    var lg="";
+    lightV.forEach(function(x){
+        var d=DATA[x.c],ec=d.emotionColor||"#34C759";
+        var tc=(ec==="#5AC8FA"||ec==="#34C759")?"lt":"dt";
+        lg+='<div class="g-block '+tc+'" style="background:'+ec+'" onclick="showDetail(\''+x.c+'\')"><div class="bn">'+x.d+'</div><div class="bt">'+d.score+'</div></div>'
+    });
+    document.getElementById("lightGrid").innerHTML=lg;
+
+    // 主题行业
+    var secV=v.filter(function(x){return x.g==="sector"&&DATA[x.c]}).sort(function(a,b){return DATA[a.c].score-DATA[b.c].score});
+    var sg="";
+    secV.forEach(function(x){
+        var d=DATA[x.c],ec=d.emotionColor||"#34C759";
+        var tc=(ec==="#5AC8FA"||ec==="#34C759")?"lt":"dt";
+        sg+='<div class="g-block '+tc+'" style="background:'+ec+'" onclick="showDetail(\''+x.c+'\')"><div class="bn">'+x.d+'</div><div class="bt">'+d.score+'</div></div>'
+    });
+    document.getElementById("sectorGrid").innerHTML=sg;
+
+    // SmartBeta
+    var smartV=v.filter(function(x){return x.g==="smart"&&DATA[x.c]});
+    var sm="";
+    smartV.forEach(function(x){
+        var d=DATA[x.c],ec=d.emotionColor||"#34C759",el=d.emotion||"中性";
+        sm+='<div class="idx-card" onclick="showDetail(\''+x.c+'\')"><div class="idx-name">'+x.d+'</div><div class="idx-right"><div class="idx-temp" style="color:'+ec+'">'+d.score+'°</div><div class="idx-tag" style="background:'+ec+'">'+el+'</div></div></div>'
+    });
+    document.getElementById("smartCards").innerHTML=sm;
+}
+
+// ━━━ 全部指数页 ━━━
+function renderAll(){
+    var v=vis();
+    var mainV=v.filter(function(x){return x.g==="main"&&DATA[x.c]});
+    var lightV=v.filter(function(x){return x.g==="light"&&DATA[x.c]}).sort(function(a,b){return DATA[a.c].score-DATA[b.c].score});
+    var secV=v.filter(function(x){return x.g==="sector"&&DATA[x.c]}).sort(function(a,b){return DATA[a.c].score-DATA[b.c].score});
+
+    var h1="";mainV.forEach(function(x){var d=DATA[x.c],ec=d.emotionColor||"#34C759",el=d.emotion||"中性";h1+='<div class="idx-card" onclick="showDetail(\''+x.c+'\')"><div class="idx-name">'+x.d+'</div><div class="idx-right"><div class="idx-temp" style="color:'+ec+'">'+d.score+'°</div><div class="idx-tag" style="background:'+ec+'">'+el+'</div></div></div>'});
+    document.getElementById("allMain").innerHTML=h1;
+
+    var h2="";lightV.forEach(function(x){var d=DATA[x.c],ec=d.emotionColor||"#34C759";var tc=(ec==="#5AC8FA"||ec==="#34C759")?"lt":"dt";h2+='<div class="g-block '+tc+'" style="background:'+ec+'" onclick="showDetail(\''+x.c+'\')"><div class="bn">'+x.d+'</div><div class="bt">'+d.score+'</div></div>'});
+    document.getElementById("allLight").innerHTML=h2;
+
+    var h3="";secV.forEach(function(x){var d=DATA[x.c],ec=d.emotionColor||"#34C759";var tc=(ec==="#5AC8FA"||ec==="#34C759")?"lt":"dt";h3+='<div class="g-block '+tc+'" style="background:'+ec+'" onclick="showDetail(\''+x.c+'\')"><div class="bn">'+x.d+'</div><div class="bt">'+d.score+'</div></div>'});
+    document.getElementById("allSector").innerHTML=h3;
+
+    var smartV=v.filter(function(x){return x.g==="smart"&&DATA[x.c]});
+    var h4="";smartV.forEach(function(x){var d=DATA[x.c],ec=d.emotionColor||"#34C759",el=d.emotion||"中性";h4+='<div class="idx-card" onclick="showDetail(\''+x.c+'\')"><div class="idx-name">'+x.d+'</div><div class="idx-right"><div class="idx-temp" style="color:'+ec+'">'+d.score+'°</div><div class="idx-tag" style="background:'+ec+'">'+el+'</div></div></div>'});
+    document.getElementById("allSmart").innerHTML=h4;
+}
+
+// ━━━ 详情页 ━━━
+var detailChart=null;
+function showDetail(code){
+    var x;for(var i=0;i<IDX.length;i++)if(IDX[i].c===code){x=IDX[i];break}
+    if(!x||!DATA[code])return;
+    var d=DATA[code],ec=d.emotionColor||"#34C759",el=d.emotion||"中性";
+
+    // 百分位排名（来自API真实数据）
+    var rk=d.ranks||{};
+    var rankItems=[["收盘价",(rk.close||0)+"%"],["成交额",(rk.turnover||0)+"%"],["PE",(rk.pe||0)+"%"],["RSI",(rk.rsi||0)+"%"]];
+    if(rk.margin!==undefined)rankItems.push(["融资余额",rk.margin+"%"]);
+    var rh=rankItems.map(function(r){return'<div class="d-rank-pill"><div class="rn">'+r[0]+'</div><div class="rv">'+r[1]+'</div></div>'}).join("");
+
+    var html='<button class="detail-back" onclick="switchTab(\'home\')">← 返回</button>';
+    html+='<div class="page-title">'+x.d+'</div>';
+
+    // 温度条
+    html+='<div class="d-temp-bar"><div class="d-bar"></div>';
+    html+='<div class="d-nums"><span>0</span><span>10</span><span>20</span><span>80</span><span>90</span><span>100</span></div>';
+    html+='<div class="d-labels"><span class="dl1">冰点</span><span class="dl2">恐惧</span><span class="dl3">中性</span><span class="dl4">贪婪</span><span class="dl5">狂热</span></div></div>';
+
+    html+='<div class="d-cards"><div class="d-card"><div class="v" style="color:'+ec+'">'+d.score+'℃</div><div class="l">市场温度</div></div>';
+    html+='<div class="d-card"><div class="v" style="color:'+ec+'">'+el+'</div><div class="l">市场状态</div></div>';
+    html+='<div class="d-card"><div class="v" style="font-size:18px">'+d.close+'</div><div class="l">'+x.d+'收盘</div><div class="c '+(d.ret>=0?"up":"dn")+'">'+(d.ret>=0?"+":"")+d.ret+'%</div></div></div>';
+
+    // 走势图
+    html+='<div class="d-section"><h3>市场温度 & '+x.d+'走势</h3><div class="d-chart"><canvas id="detailChart"></canvas></div></div>';
+
+    html+='<div class="d-section"><h3>技术指标</h3><table class="d-table"><tr><th>RSI(6)</th><td>'+d.rsi+'</td></tr><tr><th>PE(静态)</th><td>'+d.pe+'</td></tr><tr><th>涨跌幅</th><td>'+(d.ret>=0?"+":"")+d.ret+'%</td></tr><tr><th>成交额</th><td>'+d.amount+' 亿</td></tr></table></div>';
+
+    html+='<div class="d-section"><h3>百分位排名</h3><div class="d-rank" style="grid-template-columns:repeat('+Math.min(rankItems.length,4)+',1fr)">'+rh+'</div></div>';
+
+    document.getElementById("detailContent").innerHTML=html;
+    switchTab("detail");
+
+    // 渲染走势图（使用API返回的真实历史数据）
+    setTimeout(function(){
+        var ctx=document.getElementById("detailChart");
+        if(!ctx||!d.dates)return;
+        if(detailChart){detailChart.destroy();detailChart=null}
+        // 日期格式 MM-DD
+        var labels=d.dates.map(function(dt){return dt.slice(5)});
+        detailChart=new Chart(ctx,{
+            type:'line',
+            data:{labels:labels,datasets:[
+                {label:'市场温度',data:d.scores,borderColor:'#FF9500',backgroundColor:'rgba(255,149,0,0.08)',fill:true,tension:0.3,pointRadius:0,borderWidth:2,yAxisID:'y'},
+                {label:x.d,data:d.closes,borderColor:'#007AFF',borderWidth:1.5,pointRadius:0,tension:0.3,fill:false,yAxisID:'y1'}
+            ]},
+            options:{
+                responsive:true,maintainAspectRatio:false,
+                interaction:{mode:'index',intersect:false},
+                scales:{
+                    y:{min:0,max:100,position:'left',grid:{color:'#F5F5F7'},ticks:{callback:function(v){return v+'℃'},font:{size:10}}},
+                    y1:{position:'right',grid:{drawOnChartArea:false},ticks:{callback:function(v){return v.toLocaleString()},font:{size:10}}},
+                    x:{grid:{display:false},ticks:{maxTicksLimit:8,font:{size:10}}}
+                },
+                plugins:{legend:{labels:{usePointStyle:true,pointStyle:'circle',padding:12,font:{size:11}}}}
+            }
+        });
+    },80);
+}
+
+// ━━━ Tab切换 ━━━
+function switchTab(name){
+    document.querySelectorAll(".page").forEach(function(p){p.classList.remove("active")});
+    document.querySelectorAll(".btab").forEach(function(b){b.classList.remove("active")});
+    var map={home:"pageHome",all:"pageAll",detail:"pageDetail"};
+    document.getElementById(map[name]).classList.add("active");
+    var tabs=document.querySelectorAll(".btab");
+    var idx={home:0,all:1,detail:2};
+    tabs[idx[name]].classList.add("active");
+}
+
+// ━━━ 设置面板 ━━━
+function openSettings(){
+    document.getElementById("settingsOverlay").classList.add("show");
+    renderSettings();
+    checkTokenStatus();
+}
+function closeSettings(e){
+    if(e&&e.target!==document.getElementById("settingsOverlay"))return;
+    document.getElementById("settingsOverlay").classList.remove("show");
+}
+function renderSettings(){
+    var groups=[{k:"main",l:"主要指数"},{k:"light",l:"站在光里"},{k:"sector",l:"主题行业"},{k:"smart",l:"SmartBeta"}];
+    var html="";
+    groups.forEach(function(g){
+        var items=IDX.filter(function(x){return x.g===g.k});
+        var allOn=items.every(function(x){return cfg.en.indexOf(x.c)>=0});
+        html+='<div class="s-group"><div class="s-group-title"><span>'+g.l+' ('+items.filter(function(x){return cfg.en.indexOf(x.c)>=0}).length+"/"+items.length+')</span><button onclick="toggleGrp(\''+g.k+'\')">'+(allOn?"取消全选":"全选")+'</button></div><div class="s-items">';
+        items.forEach(function(x){
+            var on=cfg.en.indexOf(x.c)>=0;
+            html+='<div class="s-item '+(on?"on":"")+'" onclick="toggleIdx(\''+x.c+'\')"><div class="ck">'+(on?"✓":"")+'</div><span>'+x.d+'</span></div>'
+        });
+        html+="</div></div>"
+    });
+
+    // Token管理
+    html+='<div class="s-group" style="margin-top:16px;padding-top:16px;border-top:1px solid #E5E5EA">';
+    html+='<div class="s-group-title"><span>🔑 iFinD Token管理</span></div>';
+    html+='<div id="tokenStatus" style="font-size:12px;color:#86868B;margin-bottom:8px">检查中...</div>';
+    html+='<div style="display:flex;gap:8px"><input type="text" id="tokenInput" placeholder="粘贴新token..." style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid #E5E5EA;font-size:13px;outline:none">';
+    html+='<button onclick="updateToken()" style="padding:8px 14px;border-radius:8px;background:#007AFF;color:#fff;border:none;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">更新</button></div>';
+    html+='<div style="font-size:10px;color:#AEAEB2;margin-top:4px">token有效期约7天，过期后需重新获取</div>';
+    html+='</div>';
+
+    document.getElementById("settingsBody").innerHTML=html
+}
+function toggleIdx(c){
+    var i=cfg.en.indexOf(c);
+    if(i>=0)cfg.en.splice(i,1);else cfg.en.push(c);
+    renderSettings()
+}
+function toggleGrp(g){
+    var codes=IDX.filter(function(x){return x.g===g}).map(function(x){return x.c});
+    var allOn=codes.every(function(c){return cfg.en.indexOf(c)>=0});
+    if(allOn){cfg.en=cfg.en.filter(function(c){return codes.indexOf(c)<0})}
+    else{codes.forEach(function(c){if(cfg.en.indexOf(c)<0)cfg.en.push(c)})}
+    renderSettings()
+}
+function saveCfg(){
+    localStorage.setItem(SK,JSON.stringify(cfg));
+    showToast("✅ 已保存");
+    renderPosters();renderAll();
+    closeSettings()
+}
+function resetCfg(){
+    cfg={en:IDX.map(function(x){return x.c}),ord:IDX.map(function(x){return x.c})};
+    localStorage.setItem(SK,JSON.stringify(cfg));
+    showToast("🔄 已恢复默认");
+    renderSettings()
+}
+
+// ━━━ Token管理 ━━━
+function checkTokenStatus(){
+    fetch("/api/token/status").then(function(r){return r.json()}).then(function(res){
+        var el=document.getElementById("tokenStatus");
+        if(!el)return;
+        if(res.valid){el.innerHTML='<span style="color:#34C759">✅ token有效</span>'}
+        else{el.innerHTML='<span style="color:#FF3B30">❌ '+(res.error||"token无效")+'</span>'}
+    }).catch(function(){var el=document.getElementById("tokenStatus");if(el)el.textContent="无法连接服务"});
+}
+function updateToken(){
+    var input=document.getElementById("tokenInput");
+    if(!input||!input.value.trim()){showToast("请输入token");return}
+    fetch("/api/token/update",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:input.value.trim()})})
+    .then(function(r){return r.json()}).then(function(res){
+        if(res.success){showToast("✅ token更新成功");input.value="";checkTokenStatus();fetchData(true)}
+        else{showToast("❌ "+(res.error||"更新失败"))}
+    }).catch(function(){showToast("❌ 连接失败")})
+}
+
+function showToast(m){var t=document.getElementById("toast");t.textContent=m;t.style.display="block";setTimeout(function(){t.style.display="none"},1500)}
+
+// ━━━ 下载海报（固定1080×1440） ━━━
+function downloadPoster(id,name){
+    var el=document.getElementById(id);
+    var btn=el.nextElementSibling;
+    if(!btn||!btn.classList.contains("dl-btn")){btn=el.parentElement.querySelector(".dl-btn")}
+    if(btn){btn.textContent="⏳ 生成中...";btn.disabled=true}
+
+    var origParent=el.parentNode,origNext=el.nextSibling;
+    document.body.appendChild(el);
+    el.style.position="absolute";el.style.left="-9999px";el.style.top="0";el.style.width="540px";el.style.aspectRatio="3/4";
+
+    html2canvas(el,{scale:2,useCORS:true,backgroundColor:"#FFFFFF"}).then(function(canvas){
+        var tw=1080,th=1440,out=document.createElement("canvas");
+        out.width=tw;out.height=th;
+        var ctx=out.getContext("2d");ctx.fillStyle="#FFFFFF";ctx.fillRect(0,0,tw,th);
+        ctx.drawImage(canvas,0,0,tw,th);
+        el.style.position="";el.style.left="";el.style.top="";el.style.width="";el.style.aspectRatio="";
+        if(origNext)origParent.insertBefore(el,origNext);else origParent.appendChild(el);
+        var a=document.createElement("a");
+        a.download=name+"_"+new Date().toISOString().slice(0,10)+".png";
+        a.href=out.toDataURL("image/png");a.click();
+        if(btn){btn.textContent="✅ 下载完成";btn.disabled=false;btn.classList.add("done");setTimeout(function(){btn.classList.remove("done");btn.textContent="📥 下载"+name.split("_")[1]+"海报"},2000)}
+    }).catch(function(err){
+        el.style.position="";el.style.left="";el.style.top="";el.style.width="";el.style.aspectRatio="";
+        if(origNext)origParent.insertBefore(el,origNext);else origParent.appendChild(el);
+        if(btn){btn.textContent="❌ 失败";btn.disabled=false}
+    })
+}
+
+// ━━━ 初始化：从API加载数据 ━━━
+fetchData();
+</script>
+</body>
+</html>
