@@ -21,20 +21,20 @@ jobs:
 
       - name: Copy web files to assets
         run: |
-          mkdir -p android/app/src/main/assets/www/js
-          cp -r www/* android/app/src/main/assets/www/
+          mkdir -p 温度计APP/android/app/src/main/assets/www/js
+          cp -r 温度计APP/www/* 温度计APP/android/app/src/main/assets/www/
 
       - name: Generate Gradle Wrapper
-        working-directory: android
+        working-directory: 温度计APP/android
         run: gradle wrapper --gradle-version 8.5
 
       - name: Build Release APK
-        working-directory: android
+        working-directory: 温度计APP/android
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: A-stock-Thermometer
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: 温度计APP/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
