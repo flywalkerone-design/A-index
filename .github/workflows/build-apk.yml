@@ -19,29 +19,27 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Find and prepare project
+      - name: Unzip
+        run: unzip 温度计APP.zip
+
+      - name: Copy web files to assets
         run: |
-          ANDROID_DIR=$(find . -name "build.gradle.kts" -path "*/android/*" -exec dirname {} \; | head -1 | sed 's|/app$||')
-          echo "Found android dir: $ANDROID_DIR"
-          WWW_DIR=$(find . -name "index.html" -path "*/www/*" ! -path "*/assets/*" -exec dirname {} \; | head -1)
-          echo "Found www dir: $WWW_DIR"
-          mkdir -p "$ANDROID_DIR/app/src/main/assets/www/js"
-          cp -r "$WWW_DIR"/* "$ANDROID_DIR/app/src/main/assets/www/"
-          echo "ANDROID_DIR=$ANDROID_DIR" >> $GITHUB_ENV
+          mkdir -p 温度计APP/android/app/src/main/assets/www/js
+          cp -r 温度计APP/www/* 温度计APP/android/app/src/main/assets/www/
 
       - name: Generate Gradle Wrapper
         run: |
-          cd "$ANDROID_DIR"
+          cd 温度计APP/android
           gradle wrapper --gradle-version 8.5
 
       - name: Build Release APK
         run: |
-          cd "$ANDROID_DIR"
+          cd 温度计APP/android
           ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: A-stock-Thermometer
-          path: ${{ env.ANDROID_DIR }}/app/build/outputs/apk/release/app-release.apk
+          path: 温度计APP/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
