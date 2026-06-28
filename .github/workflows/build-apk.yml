@@ -19,8 +19,9 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Copy web files to assets
+      - name: Unzip and copy web files to assets
         run: |
+          unzip 温度计APP.zip -d 温度计APP
           mkdir -p 温度计APP/android/app/src/main/assets/www/js
           cp -r 温度计APP/www/* 温度计APP/android/app/src/main/assets/www/
 
