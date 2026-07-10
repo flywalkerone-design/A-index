@@ -58,12 +58,6 @@ var App = (function () {
     }
 
     // ━━━ 日期工具 ━━━
-    function todayStr() {
-        var d = new Date();
-        return d.getFullYear() + "年" + String(d.getMonth() + 1).padStart(2, "0") +
-            "月" + String(d.getDate()).padStart(2, "0") + "日";
-    }
-
     function formatDate(d) {
         var y = d.getFullYear();
         var m = String(d.getMonth() + 1).padStart(2, "0");
@@ -76,10 +70,37 @@ var App = (function () {
         return parseInt(parts[1]) + "月" + parseInt(parts[2]) + "日";
     }
 
+    function formatDateFullCN(dateStr) {
+        var parts = dateStr.split("-");
+        return parts[0] + "年" + parseInt(parts[1]) + "月" + parseInt(parts[2]) + "日";
+    }
+
+    // 从已加载数据中获取最新交易日（所有指数的 allDates 最新值）
+    function latestDataDateStr() {
+        if (SELECTED_DATE) return SELECTED_DATE;
+        var latest = "";
+        for (var code in DATA) {
+            if (!DATA.hasOwnProperty(code)) continue;
+            var dd = DATA[code];
+            if (dd && dd.allDates && dd.allDates.length > 0) {
+                var last = dd.allDates[dd.allDates.length - 1];
+                if (last > latest) latest = last;
+            }
+        }
+        return latest || getLatestTradeDate();
+    }
+
     function getLatestTradeDate() {
         var d = new Date();
-        d.setDate(d.getDate() - 1);
-        while (d.getDay() === 0 || d.getDay() === 6) { d.setDate(d.getDate() - 1); }
+        // T-1: 工作日往前1天，周末往前到周五
+        var dow = d.getDay();
+        if (dow === 0) d.setDate(d.getDate() - 2);      // 周日→周五
+        else if (dow === 6) d.setDate(d.getDate() - 1); // 周六→周五
+        else d.setDate(d.getDate() - 1);                 // 工作日→昨天
+        if (d.getDay() === 0 || d.getDay() === 6) {
+            // 二次检查（跨年后等情况）
+            while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+        }
         return formatDate(d);
     }
 
@@ -288,8 +309,7 @@ var App = (function () {
     }
 
     function getDisplayDateStr() {
-        if (SELECTED_DATE) return formatDateCN(SELECTED_DATE);
-        return todayStr();
+        return formatDateFullCN(latestDataDateStr());
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -552,6 +572,7 @@ var App = (function () {
     function showDetail(code) {
         var x = AppConfig.getIndexByCode(code);
         if (!x || !DATA[code]) return;
+        CAL_POSTER_CODE = code;  // 记录当前详情指数
         var d = getDisplayData(code);
         var base = DATA[code];
         var ec = d.emotionColor || "#34C759";
@@ -576,7 +597,10 @@ var App = (function () {
 
         // 近30个交易日温度日历（只显示交易日，无周末）
         html += '<div class="d-section"><h3>近30个交易日温度</h3>';
-        html += '<div class="cal-trade-grid" id="calGrid"></div></div>';
+        html += '<div id="calPosterWrap">';
+        html += '<div class="cal-trade-grid" id="calGrid"></div>';
+        html += '</div>';
+        html += '<button class="dl-btn" style="margin-top:8px" onclick="App.downloadCalPoster()">📥 分享30日温度海报</button></div>';
 
         // 近1年数据表格
         html += '<div class="d-section"><h3>近1年数据 <span style="font-weight:400;font-size:11px;color:#86868B;float:right" id="sortHint">点击表头排序</span></h3>';
@@ -953,7 +977,7 @@ var App = (function () {
         if (el) el.textContent = text;
     }
 
-    // ━━━ 下载海报（兼容浏览器和Android WebView）━━━
+    // ━━━ 下载海报（同小红书方案：直接截元素，不裁剪不复制）━━━
     var IS_ANDROID = !!(window.Android && window.Android.isAndroid());
 
     function downloadPoster(id, name) {
@@ -968,26 +992,19 @@ var App = (function () {
         var overlay = document.getElementById("downloadOverlay");
         if (overlay) overlay.classList.add("show");
 
-        el.scrollIntoView({ block: "start" });
-
         setTimeout(function () {
             html2canvas(el, {
                 scale: 2,
                 useCORS: true,
                 allowTaint: false,
                 backgroundColor: "#FFFFFF",
-                logging: false,
-                width: el.scrollWidth,
-                height: el.scrollHeight,
-                windowWidth: el.scrollWidth,
-                windowHeight: el.scrollHeight
+                logging: false
             }).then(function (canvas) {
                 if (overlay) overlay.classList.remove("show");
 
                 var filename = name + "_" + new Date().toISOString().slice(0, 10) + ".png";
 
                 if (IS_ANDROID) {
-                    // Android: 通过原生接口保存到相册
                     try {
                         var base64 = canvas.toDataURL("image/png").split(",")[1];
                         var result = Android.saveImage(base64, filename);
@@ -1002,7 +1019,6 @@ var App = (function () {
                         showToast("保存失败: " + e.message);
                     }
                 } else {
-                    // 浏览器: blob下载
                     try {
                         canvas.toBlob(function (blob) {
                             if (!blob) {
@@ -1023,7 +1039,7 @@ var App = (function () {
                 if (btn) { btn.textContent = "❌ 失败"; btn.disabled = false; }
                 showToast("生成海报失败: " + err.message);
             });
-        }, 200);
+        }, 100);
     }
 
     function downloadFile(url, filename) {
@@ -1035,6 +1051,106 @@ var App = (function () {
         var evt = new MouseEvent("click", { bubbles: true, cancelable: true, view: window });
         a.dispatchEvent(evt);
         setTimeout(function () { document.body.removeChild(a); }, 500);
+    }
+
+    // ━━━ 30日日历海报下载 ━━━
+    var CAL_POSTER_CODE = null;
+
+    function downloadCalPoster() {
+        if (!CAL_POSTER_CODE) return;
+        var x = AppConfig.getIndexByCode(CAL_POSTER_CODE);
+        var base = DATA[CAL_POSTER_CODE];
+        if (!x || !base || !base.allDates) return;
+
+        var overlay = document.getElementById("downloadOverlay");
+        if (overlay) overlay.classList.add("show");
+
+        // 创建临时海报 DOM
+        var poster = document.createElement("div");
+        poster.style.cssText = "position:fixed;left:-9999px;top:0;width:420px;min-height:560px;background:#FFF;border-radius:16px;display:flex;flex-direction:column;padding:24px 20px 20px;font-family:'PingFang SC','Microsoft YaHei',sans-serif;z-index:-1";
+        poster.id = "calPosterTemp";
+
+        var ds = formatDateFullCN(base.allDates[base.allDates.length - 1]);
+
+        poster.innerHTML =
+            '<div style="text-align:center;margin-bottom:14px">' +
+            '<h2 style="font-size:26px;font-weight:700;color:#1D1D1F;margin:0 0 4px">' + x.display + '</h2>' +
+            '<div style="font-size:12px;color:#86868B">近30个交易日温度 · ' + ds + '</div>' +
+            '</div>' +
+            '<div style="width:100%;height:16px;border-radius:8px;margin-bottom:4px;background:linear-gradient(to right,#007AFF 0%,#007AFF 10%,#5AC8FA 10%,#5AC8FA 20%,#34C759 20%,#34C759 80%,#FF9500 80%,#FF9500 90%,#FF3B30 90%,#FF3B30 100%)"></div>' +
+            '<div style="display:flex;justify-content:space-between;font-size:8px;color:#86868B;margin-bottom:6px">' +
+            '<span>0</span><span>10</span><span>20</span><span>80</span><span>90</span><span>100</span></div>' +
+            '<div style="font-size:11px;font-weight:600;color:#86868B;margin:8px 0 6px">近30个交易日</div>' +
+            '<div id="calPosterGrid" style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px;flex:1"></div>' +
+            '<div style="text-align:center;margin-top:10px;font-size:10px;color:#86868B">今日市场情绪播报 | 投资有风险，入市需谨慎</div>' +
+            '<div style="text-align:center;font-size:11px;color:#1D1D1F;font-weight:500">觉得有用欢迎点赞关注</div>';
+
+        document.body.appendChild(poster);
+
+        // 填充日历格
+        setTimeout(function () {
+            var grid = document.getElementById("calPosterGrid");
+            if (grid) {
+                var n = base.allDates.length;
+                var count = Math.min(30, n);
+                var start = n - count;
+                for (var i = start; i < n; i++) {
+                    var dt = base.allDates[i] || "";
+                    var score = base.allScores[i];
+                    var parts = dt.split("-");
+                    var dayLabel = parts[2] ? parseInt(parts[2], 10) : "";
+                    var monthLabel = parts[1] ? parseInt(parts[1], 10) : "";
+                    var ec = score !== null ? tempColor(score) : "#E5E5EA";
+                    var textClass = (ec === "#5AC8FA" || ec === "#34C759") ? "dt" : "lt";
+                    var cell = document.createElement("div");
+                    cell.style.cssText = "border-radius:6px;padding:4px 2px;text-align:center;display:flex;flex-direction:column;justify-content:center;background:" + ec + ";color:" + (textClass === "dt" ? "#1D1D1F" : "#fff") + ";min-height:33px";
+                    cell.innerHTML =
+                        '<div style="font-size:8px;font-weight:500;line-height:1">' + monthLabel + '/' + dayLabel + '</div>' +
+                        '<div style="font-size:11px;font-weight:700;line-height:1">' + (score !== null ? score : '-') + '</div>';
+                    grid.appendChild(cell);
+                }
+            }
+
+            // 用 html2canvas 截图
+            setTimeout(function () {
+                html2canvas(poster, {
+                    scale: 2, useCORS: true, allowTaint: false,
+                    backgroundColor: "#FFFFFF", logging: false
+                }).then(function (canvas) {
+                    document.body.removeChild(poster);
+                    if (overlay) overlay.classList.remove("show");
+
+                    var filename = "A股温度计_" + x.display + "_30日_" + new Date().toISOString().slice(0, 10) + ".png";
+
+                    if (IS_ANDROID) {
+                        try {
+                            var base64 = canvas.toDataURL("image/png").split(",")[1];
+                            Android.saveImage(base64, filename);
+                            showToast("✅ 海报已保存");
+                        } catch (e) {
+                            showToast("保存失败: " + e.message);
+                        }
+                    } else {
+                        try {
+                            canvas.toBlob(function (blob) {
+                                if (!blob) return;
+                                var url = URL.createObjectURL(blob);
+                                downloadFile(url, filename);
+                                setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+                                showToast("✅ 海报已下载");
+                            }, "image/png", 0.95);
+                        } catch (e) {
+                            var url = canvas.toDataURL("image/png");
+                            downloadFile(url, filename);
+                        }
+                    }
+                }).catch(function () {
+                    document.body.removeChild(poster);
+                    if (overlay) overlay.classList.remove("show");
+                    showToast("生成失败，请重试");
+                });
+            }, 50);
+        }, 50);
     }
 
     function fallbackDownload(canvas, name, btn) {
@@ -1080,6 +1196,7 @@ var App = (function () {
         resetCfg: resetCfg,
         updateToken: updateToken,
         downloadPoster: downloadPoster,
+        downloadCalPoster: downloadCalPoster,
         fetchLocal: fetchLocal,
         showToast: showToast,
         onDateChange: onDateChange,
