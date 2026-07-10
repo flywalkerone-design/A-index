@@ -29,6 +29,14 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Environment;
+import android.content.ContentValues;
+import android.provider.MediaStore;
+import android.util.Base64;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -50,11 +58,18 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // 全屏 + 沉浸式（适配 OPPO Find X8S 等全面屏手机）
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().setFlags(
             WindowManager.LayoutParams.FLAG_FULLSCREEN,
             WindowManager.LayoutParams.FLAG_FULLSCREEN
         );
+
+        // 启用 edge-to-edge 渲染
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        WindowInsetsControllerCompat controller = new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
+        controller.hide(WindowInsetsCompat.Type.systemBars());
+        controller.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
 
         prefs = getSharedPreferences("stocktemp", MODE_PRIVATE);
         mainHandler = new Handler(Looper.getMainLooper());
@@ -79,7 +94,7 @@ public class MainActivity extends AppCompatActivity {
         settings.setAllowUniversalAccessFromFileURLs(true);
 
         // 注入 JS 接口
-        webView.addJavascriptInterface(new WebAppInterface(this), "Android");
+        webView.addJavascriptInterface(new WebAppInterface(), "Android");
 
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient());
@@ -154,10 +169,6 @@ public class MainActivity extends AppCompatActivity {
             throw new RuntimeException("NO_TOKEN");
         }
 
-        String body = "{}";
-        String resp = httpPost(IFIND_BASE + "/get_access_token", body, null);
-
-        // 实际请求需要在 header 中传 refresh_token
         URL url = new URL(IFIND_BASE + "/get_access_token");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
@@ -254,7 +265,7 @@ public class MainActivity extends AppCompatActivity {
                 JSONObject json = new JSONObject(resp);
 
                 if (json.optInt("errorcode", -1) != 0) {
-                    return "{\"error\":\"" + json.optString("error", "API error") + "\"}";
+                    return errorJson(json.optString("error", "API error"));
                 }
 
                 JSONArray tables = json.optJSONArray("tables");
@@ -313,9 +324,9 @@ public class MainActivity extends AppCompatActivity {
                 if (e.getMessage().equals("NO_TOKEN")) {
                     return "{\"error\":\"NO_TOKEN\"}";
                 }
-                return "{\"error\":\"" + e.getMessage() + "\"}";
+                return errorJson(e.getMessage());
             } catch (Exception e) {
-                return "{\"error\":\"" + e.getMessage() + "\"}";
+                return errorJson(e.getMessage());
             }
         }
 
@@ -347,7 +358,7 @@ public class MainActivity extends AppCompatActivity {
                 JSONObject json = new JSONObject(resp);
 
                 if (json.optInt("errorcode", -1) != 0) {
-                    return "{\"error\":\"" + json.optString("error", "API error") + "\"}";
+                    return errorJson(json.optString("error", "API error"));
                 }
 
                 JSONArray tables = json.optJSONArray("tables");
@@ -366,25 +377,49 @@ public class MainActivity extends AppCompatActivity {
                     return "{\"dates\":[],\"margin_balance\":[]}";
                 }
 
-                // 生成日期序列（从 startDate 开始，按自然日）
+                // 优先使用 API 返回的 time 数组（交易日日期）
                 JSONObject result = new JSONObject();
-                java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy-MM-dd");
-                java.util.Date start = sdf.parse(startDate);
-                java.util.Date end = sdf.parse(endDate);
+                JSONArray timeArr = item.optJSONArray("time");
                 JSONArray dates = new JSONArray();
                 JSONArray mbArr = new JSONArray();
-                java.util.Calendar cal = java.util.Calendar.getInstance();
-                cal.setTime(start);
-                int idx = 0;
-                while (!cal.getTime().after(end) && idx < vals.length()) {
-                    dates.put(sdf.format(cal.getTime()));
-                    if (vals.isNull(idx)) {
-                        mbArr.put(JSONObject.NULL);
-                    } else {
-                        mbArr.put(vals.optDouble(idx, 0));
+
+                if (timeArr != null && timeArr.length() > 0) {
+                    // 有 time 字段：直接用 API 返回的交易日日期
+                    int n = Math.min(timeArr.length(), vals.length());
+                    for (int i = 0; i < n; i++) {
+                        String d = timeArr.getString(i);
+                        if (d.length() == 8 && !d.contains("-")) {
+                            d = d.substring(0, 4) + "-" + d.substring(4, 6) + "-" + d.substring(6);
+                        }
+                        dates.put(d);
+                        if (vals.isNull(i)) {
+                            mbArr.put(JSONObject.NULL);
+                        } else {
+                            mbArr.put(vals.optDouble(i, 0));
+                        }
                     }
-                    cal.add(java.util.Calendar.DAY_OF_MONTH, 1);
-                    idx++;
+                } else {
+                    // 无 time 字段：按自然日生成（跳过周末）
+                    java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy-MM-dd");
+                    java.util.Date start = sdf.parse(startDate);
+                    java.util.Date end = sdf.parse(endDate);
+                    java.util.Calendar cal = java.util.Calendar.getInstance();
+                    cal.setTime(start);
+                    int idx = 0;
+                    while (!cal.getTime().after(end) && idx < vals.length()) {
+                        int dow = cal.get(java.util.Calendar.DAY_OF_WEEK);
+                        // 跳过周末
+                        if (dow != java.util.Calendar.SATURDAY && dow != java.util.Calendar.SUNDAY) {
+                            dates.put(sdf.format(cal.getTime()));
+                            if (vals.isNull(idx)) {
+                                mbArr.put(JSONObject.NULL);
+                            } else {
+                                mbArr.put(vals.optDouble(idx, 0));
+                            }
+                            idx++;
+                        }
+                        cal.add(java.util.Calendar.DAY_OF_MONTH, 1);
+                    }
                 }
 
                 result.put("dates", dates);
@@ -395,9 +430,9 @@ public class MainActivity extends AppCompatActivity {
                 if (e.getMessage().equals("NO_TOKEN")) {
                     return "{\"error\":\"NO_TOKEN\"}";
                 }
-                return "{\"error\":\"" + e.getMessage() + "\"}";
+                return errorJson(e.getMessage());
             } catch (Exception e) {
-                return "{\"error\":\"" + e.getMessage() + "\"}";
+                return errorJson(e.getMessage());
             }
         }
 
@@ -414,9 +449,76 @@ public class MainActivity extends AppCompatActivity {
                 if (e.getMessage().equals("NO_TOKEN")) {
                     return "{\"valid\":false,\"error\":\"未设置token\"}";
                 }
-                return "{\"valid\":false,\"error\":\"" + e.getMessage() + "\"}";
+                return "{\"valid\":false,\"error\":\"" + escapeJson(e.getMessage()) + "\"}";
             } catch (Exception e) {
-                return "{\"valid\":false,\"error\":\"" + e.getMessage() + "\"}";
+                return "{\"valid\":false,\"error\":\"" + escapeJson(e.getMessage()) + "\"}";
+            }
+        }
+
+        /**
+         * 保存图片到相册（Android 端截图下载）
+         * 返回 "ok" 表示成功，其他字符串为错误信息
+         */
+        @JavascriptInterface
+        public String saveImage(String base64Data, String filename) {
+            try {
+                byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    // Android 10+: 使用 MediaStore
+                    ContentValues values = new ContentValues();
+                    values.put(MediaStore.Images.Media.DISPLAY_NAME, filename);
+                    values.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
+                    values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/StockTemp");
+                    values.put(MediaStore.Images.Media.IS_PENDING, 1);
+
+                    Uri uri = getContentResolver().insert(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                    if (uri == null) return "无法创建文件";
+
+                    try (OutputStream os = getContentResolver().openOutputStream(uri)) {
+                        if (os == null) return "无法打开输出流";
+                        os.write(bytes);
+                    }
+
+                    values.clear();
+                    values.put(MediaStore.Images.Media.IS_PENDING, 0);
+                    getContentResolver().update(uri, values, null, null);
+                } else {
+                    // Android 9 及以下
+                    File dir = new File(
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                        "StockTemp");
+                    if (!dir.exists()) dir.mkdirs();
+                    File file = new File(dir, filename);
+                    try (FileOutputStream fos = new FileOutputStream(file)) {
+                        fos.write(bytes);
+                    }
+                }
+
+                // Toast 提示
+                mainHandler.post(() ->
+                    Toast.makeText(MainActivity.this,
+                        "已保存到相册: " + filename, Toast.LENGTH_SHORT).show());
+
+                return "ok";
+            } catch (Exception e) {
+                return "保存失败: " + e.getMessage();
+            }
+        }
+
+        private String escapeJson(String s) {
+            if (s == null) return "";
+            return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r");
+        }
+
+        private String errorJson(String msg) {
+            try {
+                JSONObject err = new JSONObject();
+                err.put("error", msg);
+                return err.toString();
+            } catch (Exception e) {
+                return "{\"error\":\"unknown\"}";
             }
         }
     }

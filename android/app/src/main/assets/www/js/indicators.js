@@ -69,10 +69,14 @@ var Indicators = (function () {
         var n = closes.length;
         var rsi = new Array(n).fill(null);
 
-        // 计算涨跌幅
+        // 计算涨跌幅（跳过空数据）
         var delta = new Array(n).fill(0);
         for (var i = 1; i < n; i++) {
-            delta[i] = closes[i] - closes[i - 1];
+            if (closes[i] !== null && closes[i] !== undefined &&
+                closes[i - 1] !== null && closes[i - 1] !== undefined &&
+                !isNaN(closes[i]) && !isNaN(closes[i - 1])) {
+                delta[i] = closes[i] - closes[i - 1];
+            }
         }
 
         // Wilder EMA 平滑法：alpha = 1/period
@@ -96,7 +100,7 @@ var Indicators = (function () {
 
         // RSI 从第 period 个数据点开始
         if (avgLoss === 0) {
-            rsi[period] = avgGain > 0 ? 100 : 50;
+            rsi[period] = avgGain > 0 ? 100 : null;  // 无波动时返回null（匹配Python）
         } else {
             rsi[period] = 100 - (100 / (1 + avgGain / avgLoss));
         }

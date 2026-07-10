@@ -79,6 +79,17 @@ var Fetch = (function () {
                         resolve({ error: data.error });
                         return;
                     }
+                    // 单位转换：iFinD amount=元 → 亿元, volume=股 → 万手
+                    if (data.amount) {
+                        data.amount = data.amount.map(function (v) {
+                            return v !== null ? Math.round(v / 1e8 * 100) / 100 : null;
+                        });
+                    }
+                    if (data.volume) {
+                        data.volume = data.volume.map(function (v) {
+                            return v !== null ? Math.round(v / 10000 * 100) / 100 : null;
+                        });
+                    }
                     // 缓存结果
                     if (data.dates && data.dates.length > 0) {
                         setCache(ck, data);

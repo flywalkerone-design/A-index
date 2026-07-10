@@ -2,21 +2,21 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>A股温度计</title>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#000;display:flex;justify-content:center;align-items:center;min-height:100vh}
+html,body{height:100%;overflow:hidden}
+body{font-family:"PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif;background:#1A1A1A;display:flex;justify-content:center;align-items:center}
 
-/* 手机壳 */
-.phone{width:390px;height:844px;background:#F5F5F7;border-radius:44px;border:4px solid #1D1D1F;position:relative;overflow:hidden;box-shadow:0 0 0 4px #333,0 20px 60px rgba(0,0,0,0.5)}
-.notch{width:130px;height:30px;background:#1D1D1F;border-radius:0 0 18px 18px;margin:0 auto}
-.screen{height:calc(100% - 30px);display:flex;flex-direction:column;overflow:hidden}
+/* 手机壳预览 —— 桌面端限制宽度，真机自动全屏 */
+.phone-wrapper{width:100%;max-width:420px;height:100%;background:#F5F5F7;display:flex;flex-direction:column;position:relative;overflow:hidden}
+@media (max-width:420px){.phone-wrapper{max-width:100%}}
 
-/* 状态栏 */
-.status-bar{display:flex;justify-content:space-between;align-items:center;padding:6px 24px;font-size:12px;font-weight:600;color:#1D1D1F}
+/* 状态栏 - Android全面屏 */
+.status-bar{display:flex;justify-content:space-between;align-items:center;padding:8px 20px;font-size:12px;font-weight:600;color:#1D1D1F;background:#F5F5F7;flex-shrink:0}
 .status-bar .time{font-size:14px;font-weight:700}
 
 /* 页面容器 */
@@ -26,7 +26,7 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
 .page::-webkit-scrollbar{display:none}
 
 /* 底部Tab */
-.bottom-tab{display:flex;background:#fff;border-top:1px solid #E5E5EA;padding:6px 0 env(safe-area-inset-bottom,8px)}
+.bottom-tab{display:flex;background:#fff;border-top:1px solid #E5E5EA;padding:6px 0 env(safe-area-inset-bottom,8px);flex-shrink:0}
 .btab{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 0;border:none;background:none;cursor:pointer;font-family:inherit}
 .btab-icon{font-size:22px;line-height:1}
 .btab-label{font-size:10px;color:#86868B;font-weight:500}
@@ -40,7 +40,7 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
 .settings-btn{position:absolute;top:8px;right:16px;width:32px;height:32px;border-radius:50%;background:#fff;border:none;cursor:pointer;font-size:16px;box-shadow:0 1px 4px rgba(0,0,0,0.08);z-index:10;display:flex;align-items:center;justify-content:center}
 
 /* ========== 海报卡片 ========== */
-.poster-card{background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.06);margin-bottom:16px;aspect-ratio:3/4;display:flex;flex-direction:column}
+.poster-card{background:#fff;border-radius:20px;overflow:visible;box-shadow:0 4px 20px rgba(0,0,0,0.06);margin-bottom:16px;display:flex;flex-direction:column;min-height:400px}
 .poster-inner{padding:24px 20px 20px;flex:1;display:flex;flex-direction:column}
 .poster-header{text-align:center;margin-bottom:16px}
 .poster-header h2{font-size:28px;font-weight:700;color:#1D1D1F}
@@ -78,14 +78,49 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
 .g-block.lt .bn,.g-block.lt .bt{color:#fff}
 .g-block.dt .bn,.g-block.dt .bt{color:#1D1D1F}
 
+/* 合并海报专用：主要指数小方块 */
+.poster-main-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px}
+.poster-main-grid .g-block{padding:6px 2px;min-height:40px}
+.poster-main-grid .g-block .bn{font-size:9px}
+.poster-main-grid .g-block .bt{font-size:15px}
+
 .poster-footer{text-align:center;margin-top:10px}
 .poster-footer .ft1{font-size:10px;color:#86868B}
 .poster-footer .ft2{font-size:11px;color:#1D1D1F;font-weight:500}
+
+/* 日期回溯 */
+.date-bar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.date-bar input[type="date"]{padding:6px 10px;border-radius:8px;border:1px solid #E5E5EA;font-size:13px;font-family:inherit;background:#fff;outline:none;-webkit-appearance:none;min-width:130px}
+.date-bar input[type="date"]:focus{border-color:#007AFF}
+.date-bar .backtrack-info{font-size:12px;color:#FF9500;font-weight:600;display:none}
+.date-bar .clear-date{font-size:11px;color:#007AFF;border:none;background:none;cursor:pointer;font-family:inherit;display:none}
+.date-bar .clear-date.show{display:inline}
+
+/* 极端板块（海报内+全部tab共用） */
+.extreme-row{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:#F8F8FA;border-radius:12px;margin-bottom:6px;cursor:pointer}
+.extreme-row:active{background:#EFEFEF}
+.extreme-name{font-size:15px;font-weight:600;color:#1D1D1F}
+.extreme-temps{display:flex;gap:6px}
+.extreme-badge{display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:26px;border-radius:8px;color:#fff;font-size:12px;font-weight:700;padding:0 6px}
+
+/* 30个交易日日历（6列纯交易日，无周末） */
+.cal-trade-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
+.cal-trade-cell{border-radius:8px;padding:5px 3px;text-align:center;min-height:40px;display:flex;flex-direction:column;justify-content:center;gap:1px}
+.cal-trade-cell.lt{color:#fff}
+.cal-trade-cell.dt{color:#1D1D1F}
+.cal-trade-label{font-size:9px;font-weight:500;line-height:1}
+.cal-trade-temp{font-size:12px;font-weight:700;line-height:1}
+
+/* 可排序表头 */
+.d-table th.clickable{cursor:pointer;user-select:none;color:#007AFF}
+.d-table th.clickable:active{opacity:0.7}
+.temp-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:middle}
 
 /* 下载按钮 */
 .dl-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:12px;border-radius:14px;background:#007AFF;color:#fff;border:none;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:12px}
 .dl-btn:active{background:#0066DD;transform:scale(0.98)}
 .dl-btn.done{background:#34C759}
+.dl-btn:disabled{background:#999;cursor:not-allowed}
 
 /* ========== 设置面板 ========== */
 .settings-overlay{position:absolute;inset:0;background:rgba(0,0,0,0.4);z-index:100;display:none}
@@ -141,28 +176,43 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
 /* Toast */
 .toast{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.75);color:#fff;padding:12px 24px;border-radius:12px;font-size:14px;font-weight:600;z-index:200;display:none;pointer-events:none}
 
-/* 模式切换 */
-.mode-bar{display:flex;gap:6px;justify-content:center;padding:4px 0}
-.mode-btn{padding:4px 12px;border-radius:8px;font-size:11px;font-weight:600;border:1px solid #E5E5EA;background:#fff;color:#86868B;cursor:pointer;font-family:inherit}
-.mode-btn.active{background:#007AFF;color:#fff;border-color:#007AFF}
+/* 加载遮罩 */
+.loading-overlay{position:absolute;inset:0;background:rgba(245,245,247,0.95);z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+.loading-overlay.hidden{display:none}
+.loading-spinner{width:36px;height:36px;border:3px solid #E5E5EA;border-top-color:#007AFF;border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:14px;color:#86868B;font-weight:500}
+.loading-sub{font-size:11px;color:#AEAEB2}
+
+/* 下载遮罩 */
+.download-overlay{position:absolute;inset:0;background:rgba(0,0,0,0.5);z-index:400;display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px}
+.download-overlay.show{display:flex}
+.download-overlay .loading-spinner{border-color:rgba(255,255,255,0.3);border-top-color:#fff}
+.download-overlay .loading-text{color:#fff}
 </style>
 </head>
 <body>
 
-<div class="phone">
-<div class="notch"></div>
-<div class="screen">
+<div class="phone-wrapper">
+    <!-- 状态栏 -->
     <div class="status-bar">
         <span class="time" id="clock">9:41</span>
         <span>📶 🔋</span>
     </div>
 
     <div class="pages">
-        <!-- ===== 主页：三张海报 ===== -->
+        <!-- ===== 主页：海报 ===== -->
         <div class="page active" id="pageHome">
             <div style="position:relative">
                 <div class="page-title">A股温度计 <span class="page-subtitle" id="homeDate"></span></div>
                 <button class="settings-btn" onclick="App.openSettings()">⚙️</button>
+            </div>
+
+            <!-- 日期回溯 -->
+            <div class="date-bar">
+                <input type="date" id="datePicker" onchange="App.onDateChange()" placeholder="选择日期回溯">
+                <span class="backtrack-info" id="backtrackInfo"></span>
+                <button class="clear-date" id="clearDateBtn" onclick="App.clearDateFilter()">✕ 回到最新</button>
             </div>
 
             <!-- 海报1：主要指数 -->
@@ -213,7 +263,33 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
             </div>
             <button class="dl-btn" onclick="App.downloadPoster('posterLight','A股温度计_站在光里')">📥 下载站在光里海报</button>
 
-            <!-- 海报3：主题行业 -->
+            <!-- 海报3：主要指数+主题行业 合并 -->
+            <div class="poster-card" id="posterCombined">
+                <div class="poster-inner">
+                    <div class="poster-header">
+                        <h2>A股温度计</h2>
+                        <div class="date" id="posterDate5"></div>
+                    </div>
+                    <div class="temp-bar"></div>
+                    <div class="temp-nums"><span style="left:0%">0</span><span style="left:10%">10</span><span style="left:20%">20</span><span style="left:80%">80</span><span style="left:90%">90</span><span style="left:100%">100</span></div>
+                    <div class="temp-labels">
+                        <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
+                    </div>
+                    <div class="poster-body">
+                        <div class="section-title">主要指数</div>
+                        <div class="poster-main-grid" id="combinedMainGrid"></div>
+                        <div class="section-title">主题行业</div>
+                        <div class="grid g4x4" id="combinedSectorGrid"></div>
+                    </div>
+                    <div class="poster-footer">
+                        <div class="ft1">今日市场情绪播报 | 投资有风险，入市需谨慎</div>
+                        <div class="ft2">觉得有用欢迎点赞关注</div>
+                    </div>
+                </div>
+            </div>
+            <button class="dl-btn" onclick="App.downloadPoster('posterCombined','A股温度计_主要指数+主题行业')">📥 下载合并海报</button>
+
+            <!-- 海报4：主题行业 -->
             <div class="poster-card" id="posterSector">
                 <div class="poster-inner">
                     <div class="poster-header">
@@ -237,7 +313,7 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
             </div>
             <button class="dl-btn" onclick="App.downloadPoster('posterSector','A股温度计_主题行业')">📥 下载主题行业海报</button>
 
-            <!-- 海报4：SmartBeta -->
+            <!-- 海报5：SmartBeta -->
             <div class="poster-card" id="posterSmart">
                 <div class="poster-inner">
                     <div class="poster-header">
@@ -259,6 +335,54 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
                 </div>
             </div>
             <button class="dl-btn" onclick="App.downloadPoster('posterSmart','SmartBeta')">📥 下载SmartBeta海报</button>
+
+            <!-- 海报6：连续5日冰点板块（温度<10） -->
+            <div class="poster-card" id="posterExtremeCold">
+                <div class="poster-inner">
+                    <div class="poster-header">
+                        <h2>❄️ 冰点板块</h2>
+                        <div class="date" id="posterDate6"></div>
+                    </div>
+                    <div class="temp-bar"></div>
+                    <div class="temp-nums"><span style="left:0%">0</span><span style="left:10%">10</span><span style="left:20%">20</span><span style="left:80%">80</span><span style="left:90%">90</span><span style="left:100%">100</span></div>
+                    <div class="temp-labels">
+                        <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
+                    </div>
+                    <div class="poster-body">
+                        <div class="section-title" style="color:#007AFF" id="coldPosterTitle">连续5日温度 &lt; 10</div>
+                        <div id="coldPosterGrid"></div>
+                    </div>
+                    <div class="poster-footer">
+                        <div class="ft1">今日市场情绪播报 | 投资有风险，入市需谨慎</div>
+                        <div class="ft2">觉得有用欢迎点赞关注</div>
+                    </div>
+                </div>
+            </div>
+            <button class="dl-btn" onclick="App.downloadPoster('posterExtremeCold','A股温度计_冰点板块')">📥 下载冰点板块海报</button>
+
+            <!-- 海报7：连续5日狂热板块（温度>90） -->
+            <div class="poster-card" id="posterExtremeHot">
+                <div class="poster-inner">
+                    <div class="poster-header">
+                        <h2>🔥 狂热板块</h2>
+                        <div class="date" id="posterDate7"></div>
+                    </div>
+                    <div class="temp-bar"></div>
+                    <div class="temp-nums"><span style="left:0%">0</span><span style="left:10%">10</span><span style="left:20%">20</span><span style="left:80%">80</span><span style="left:90%">90</span><span style="left:100%">100</span></div>
+                    <div class="temp-labels">
+                        <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
+                    </div>
+                    <div class="poster-body">
+                        <div class="section-title" style="color:#FF3B30" id="hotPosterTitle">连续5日温度 &gt; 90</div>
+                        <div id="hotPosterGrid"></div>
+                    </div>
+                    <div class="poster-footer">
+                        <div class="ft1">今日市场情绪播报 | 投资有风险，入市需谨慎</div>
+                        <div class="ft2">觉得有用欢迎点赞关注</div>
+                    </div>
+                </div>
+            </div>
+            <button class="dl-btn" onclick="App.downloadPoster('posterExtremeHot','A股温度计_狂热板块')">📥 下载狂热板块海报</button>
         </div>
 
         <!-- ===== 全部指数Tab ===== -->
@@ -272,6 +396,9 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
             <div class="idx-cards" id="allSmart" style="margin-bottom:12px"></div>
             <div class="section-title">主题行业</div>
             <div class="grid g4x4" id="allSector"></div>
+            <!-- 极端板块 -->
+            <div class="section-title" style="margin-top:16px;border-top:1px solid #E5E5EA;padding-top:12px">⚠️ 极端板块监控</div>
+            <div id="allExtreme"></div>
         </div>
 
         <!-- ===== 详情Tab ===== -->
@@ -301,16 +428,21 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
     </div>
 
     <!-- 加载遮罩 -->
-    <div id="loadingOverlay" style="position:absolute;inset:0;background:rgba(245,245,247,0.95);z-index:300;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px">
-        <div style="width:36px;height:36px;border:3px solid #E5E5EA;border-top-color:#007AFF;border-radius:50%;animation:spin 0.8s linear infinite"></div>
-        <div style="font-size:14px;color:#86868B;font-weight:500" id="loadingText">正在获取市场数据...</div>
-        <div style="font-size:11px;color:#AEAEB2">首次加载约需30秒</div>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text" id="loadingText">正在获取市场数据...</div>
+        <div class="loading-sub">首次加载约需30秒</div>
     </div>
-    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+
+    <!-- 下载遮罩 -->
+    <div class="download-overlay" id="downloadOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">正在生成海报...</div>
+    </div>
 
     <div class="toast" id="toast"></div>
 </div>
-</div>
+<!-- end phone-wrapper -->
 
 <!-- 加载 JS 模块 -->
 <script src="js/config.js"></script>
