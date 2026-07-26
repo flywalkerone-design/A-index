@@ -367,6 +367,8 @@ def fetch_index_history_ifind(code: str, startdate: str, enddate: str) -> pd.Dat
         "changeRatio": "change_pct",
         "pe_ttm_index": "pe",
     })
+    # 缓存列与增量接口字段可能在重命名后同名，保留最后一列（最新数据）。
+    df = df.loc[:, ~df.columns.duplicated(keep="last")]
     for col in ["open", "high", "low", "close", "change_pct", "volume", "amount", "pe"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")

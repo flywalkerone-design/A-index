@@ -1,51 +1,43 @@
 """
-A股温度计 - 数据服务层
-封装：iFinD数据获取 → 指标计算 → 温度评分 → JSON输出
+A股温度计 - data service layer
 """
 
 import sys
-import time
-import warnings
-from pathlib import Path
 from datetime import datetime, timedelta
+from pathlib import Path
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
-warnings.filterwarnings("ignore")
-
-# 路径设置
 APP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_DIR))
 
-from config import (
-    INDEXES, DATA_START_DATE, MARKET_STATES,
-    RSI_PERIOD, PERCENTRANK_WINDOW, LOW_FREQ_WINDOW, MA_PERIODS
-)
+from config import INDEXES, MARKET_STATES
 from utils.ifind_data import (
-    fetch_index_history_ifind, fetch_margin_ifind,
-    _ensure_token, _get_refresh_token
+    _ensure_token,
+    fetch_index_history_ifind,
+    fetch_margin_ifind,
 )
 from utils.indicators import calc_all_indicators
 from utils.scoring import calc_market_temperature
 
-# Token 文件路径
 TOKEN_FILE = APP_DIR / "ifind_token.txt"
-DATA_CACHE_DIR = APP_DIR / "data" / "cache"
 
 
 def _emotion(score):
-    """温度 → 情绪（5级，海报用）"""
     v = max(0, min(100, score))
-    if v < 10: return {"label": "冰点", "color": "#007AFF"}
-    if v < 20: return {"label": "恐惧", "color": "#5AC8FA"}
-    if v < 80: return {"label": "中性", "color": "#34C759"}
-    if v < 90: return {"label": "贪婪", "color": "#FF9500"}
+    if v < 10:
+        return {"label": "冰点", "color": "#007AFF"}
+    if v < 20:
+        return {"label": "恐惧", "color": "#5AC8FA"}
+    if v < 80:
+        return {"label": "中性", "color": "#34C759"}
+    if v < 90:
+        return {"label": "贪婪", "color": "#FF9500"}
     return {"label": "狂热", "color": "#FF3B30"}
 
 
 def _get_state(score):
-    """温度 → 市场状态（7级，详情页用）"""
     for low, high, name, color in MARKET_STATES:
         if low <= score < high:
             return name, color
@@ -53,7 +45,6 @@ def _get_state(score):
 
 
 def check_token():
-    """检查token是否有效"""
     if not TOKEN_FILE.exists():
         return {"valid": False, "error": "token文件不存在", "path": str(TOKEN_FILE)}
     try:
@@ -64,13 +55,11 @@ def check_token():
 
 
 def update_token(new_token):
-    """更新token文件"""
     TOKEN_FILE.write_text(new_token.strip(), encoding="utf-8")
-    # 清除内存缓存
     import utils.ifind_data as ifd
+
     ifd._access_token = None
     ifd._token_expiry = 0
-    # 验证新token
     try:
         _ensure_token()
         return {"success": True, "message": "token更新成功并验证通过"}
@@ -79,48 +68,48 @@ def update_token(new_token):
 
 
 def fetch_single_index(idx_config, start_date, end_date):
-    """获取单个指数的完整数据（行情+融资+指标+温度）"""
     code = idx_config["code"]
     ifind_code = idx_config["ifind_code"]
     use_margin = idx_config.get("margin", True)
 
-    # 1. 获取行情数据
     df = fetch_index_history_ifind(ifind_code, start_date, end_date)
     if df is None or df.empty:
         return None
 
-    # 2. T-1 截止（去掉最新一天可能不完整的数据）
     today = datetime.now().date()
-    if today.weekday() < 5:  # 工作日
+    if today.weekday() < 5:
         df = df[df["date"].dt.date < today]
-    else:  # 周末
-        df = df[df["date"].dt.date < today - timedelta(days=today.weekday() - 4)]
+    else:
+        last_trade_day = today - timedelta(days=today.weekday() - 4)
+        df = df[df["date"].dt.date < last_trade_day]
 
     if df.empty:
         return None
 
-    # 3. 获取融资余额
     if use_margin:
         try:
             margin_df = fetch_margin_ifind(ifind_code, start_date, end_date)
-            if margin_df is not None and not margin_df.empty:
-                df = df.merge(margin_df, on="date", how="left")
-            else:
-                use_margin = False
+            if margin_df is None or margin_df.empty:
+                return None
+            df = df.merge(margin_df, on="date", how="left")
         except Exception:
-            use_margin = False
+            return None
 
     if "margin_balance" not in df.columns:
-        df["margin_balance"] = np.nan
-        use_margin = False
+        return None
 
-    # 4. 计算指标
+    if use_margin:
+        valid_margin = df[df["margin_balance"].notna()]
+        if valid_margin.empty:
+            return None
+        last_margin_date = valid_margin["date"].max()
+        df = df[df["date"] <= last_margin_date]
+        if df.empty:
+            return None
+
     df = calc_all_indicators(df, use_margin=use_margin)
-
-    # 5. 计算温度
     df = calc_market_temperature(df, use_margin=use_margin)
 
-    # 6. 标记有效数据
     rank_cols = ["rank_close", "rank_turnover", "rank_pe", "rank_rsi"]
     if use_margin:
         rank_cols.append("rank_margin")
@@ -130,11 +119,8 @@ def fetch_single_index(idx_config, start_date, end_date):
 
 
 def fetch_all_data():
-    """获取全部指数数据，返回前端可用的JSON结构"""
-    # 确保token有效
     _ensure_token()
 
-    # 计算日期范围（需要额外365天给PERCENTRANK窗口）
     start = (datetime.now() - timedelta(days=365 * 2 + 30)).strftime("%Y-%m-%d")
     end = datetime.now().strftime("%Y-%m-%d")
 
@@ -149,7 +135,6 @@ def fetch_all_data():
                 errors.append(f"{code}: 无数据")
                 continue
 
-            # 取有效数据的最新行
             valid = df[df["data_ok"]] if "data_ok" in df.columns else df
             if valid.empty:
                 valid = df
@@ -159,15 +144,11 @@ def fetch_all_data():
             state_name, state_color = _get_state(score)
             emo = _emotion(score)
 
-            # 最近180天走势数据
             df_chart = df.tail(180)
             dates = [d.strftime("%Y-%m-%d") for d in df_chart["date"]]
-            scores = [round(float(s) * 100) if not pd.isna(s) else None
-                      for s in df_chart["market_score_low_freq"]]
-            closes = [round(float(c), 2) if not pd.isna(c) else None
-                      for c in df_chart["close"]]
+            scores = [round(float(s) * 100) if not pd.isna(s) else None for s in df_chart["market_score_low_freq"]]
+            closes = [round(float(c), 2) if not pd.isna(c) else None for c in df_chart["close"]]
 
-            # 百分位排名
             ranks = {
                 "close": round(float(latest.get("rank_close", 0)) * 100),
                 "turnover": round(float(latest.get("rank_turnover", 0)) * 100),
@@ -199,7 +180,6 @@ def fetch_all_data():
                 "scores": scores,
                 "closes": closes,
             })
-
         except Exception as e:
             errors.append(f"{code}: {e}")
 

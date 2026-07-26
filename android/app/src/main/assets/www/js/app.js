@@ -12,7 +12,17 @@ var App = (function () {
     var DATA = {};          // code -> index data
     var CURRENT_TAB = "home";
     var DETAIL_CHART = null;
+    var DATA_CHARTS = {};
+    var CHART_DATA = null;
+    var CHART_DATA_LOADING = null;
+    var CHART_RANGES = {};
+    var DETAIL_CODE = null;
+    var POSTER_LAYOUT_KEY = "a_stock_poster_layout_v1";
+    var POSTER_EDITING = false;
+    var ACTIVE_CHART_LANDSCAPE = null;
     var SELECTED_DATE = null;  // 日期回溯：选中的日期，null=最新
+    var DATA_CACHE_KEY = "a_stock_data_snapshot_v5";
+    var REFRESH_IN_PROGRESS = false;
 
     // ━━━ 配置管理 ━━━
     var SK = "a_stock_cfg_v6";
@@ -79,15 +89,20 @@ var App = (function () {
     function latestDataDateStr() {
         if (SELECTED_DATE) return SELECTED_DATE;
         var latest = "";
+        var earliestLatest = "";
         for (var code in DATA) {
             if (!DATA.hasOwnProperty(code)) continue;
             var dd = DATA[code];
             if (dd && dd.allDates && dd.allDates.length > 0) {
-                var last = dd.allDates[dd.allDates.length - 1];
+                var lastIndex = dd.allDates.length - 1;
+                while (lastIndex >= 0 && dd.allScores && dd.allScores[lastIndex] === null) lastIndex--;
+                if (lastIndex < 0) continue;
+                var last = dd.allDates[lastIndex];
                 if (last > latest) latest = last;
+                if (!earliestLatest || last < earliestLatest) earliestLatest = last;
             }
         }
-        return latest || getLatestTradeDate();
+        return earliestLatest || latest || getLatestTradeDate();
     }
 
     function getLatestTradeDate() {
@@ -104,6 +119,26 @@ var App = (function () {
         return formatDate(d);
     }
 
+    function previousTradeDate(dateStr) {
+        var d = new Date(dateStr + "T00:00:00");
+        d.setDate(d.getDate() - 1);
+        while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+        return formatDate(d);
+    }
+
+    function dataNeedsRefresh(current) {
+        for (var i = 0; i < AppConfig.INDEXES.length; i++) {
+            var idx = AppConfig.INDEXES[i];
+            var item = DATA[idx.code];
+            if (!item || !item.allDates || !item.allDates.length) return true;
+            var validIndex = item.allDates.length - 1;
+            while (validIndex >= 0 && item.allScores && item.allScores[validIndex] === null) validIndex--;
+            var target = idx.margin ? previousTradeDate(current) : current;
+            if (validIndex < 0 || item.allDates[validIndex] < target) return true;
+        }
+        return false;
+    }
+
     function findClosestTradeIdx(dates, targetDate) {
         var idx = -1;
         for (var i = 0; i < dates.length; i++) {
@@ -113,11 +148,80 @@ var App = (function () {
         return idx;
     }
 
+    function commonDataDate(targetDate) {
+        var result = targetDate || "9999-12-31";
+        var found = false;
+        for (var i = 0; i < AppConfig.INDEXES.length; i++) {
+            var item = DATA[AppConfig.INDEXES[i].code];
+            if (!item || !item.allDates || !item.allDates.length) continue;
+            var index = findClosestTradeIdx(item.allDates, result);
+            while (index >= 0 && item.allScores && item.allScores[index] === null) index--;
+            if (index < 0) return null;
+            var date = item.allDates[index];
+            if (date < result) result = date;
+            found = true;
+        }
+        return found && result !== "9999-12-31" ? result : null;
+    }
+
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 数据加载（前端本地计算）
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    function fetchLocal() {
-        showLoading(true);
+    function loadDataSnapshot() {
+        try {
+            var raw = localStorage.getItem(DATA_CACHE_KEY);
+            if (!raw) return false;
+            var snapshot = JSON.parse(raw);
+            if (!snapshot || snapshot.version !== 1 || !snapshot.data) return false;
+            var codes = Object.keys(snapshot.data);
+            if (!codes.length) return false;
+            DATA = snapshot.data;
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function saveDataSnapshot() {
+        if (!Object.keys(DATA).length) return;
+        try {
+            localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({
+                version: 1,
+                savedAt: Date.now(),
+                data: DATA,
+            }));
+        } catch (e) {
+            // 快照过大时保留原始接口缓存，不影响本次展示。
+        }
+    }
+
+    function clearDataSnapshot() {
+        try { localStorage.removeItem(DATA_CACHE_KEY); } catch (e) { /* ignore */ }
+    }
+
+    function renderCachedData() {
+        showLoading(false);
+        updateDatePickerMax();
+        renderAll();
+        if (CURRENT_TAB === "data" && CHART_DATA) renderDataCharts();
+    }
+
+    function fetchLocal(force) {
+        force = !!force;
+        var hasData = Object.keys(DATA).length > 0;
+        var latest = hasData ? latestDataDateStr() : "";
+        var current = getLatestTradeDate();
+
+        if (hasData) {
+            renderCachedData();
+            if (!force && !dataNeedsRefresh(current)) return;
+            if (!force) showToast("已显示历史结果，正在后台检查更新");
+        } else {
+            showLoading(true);
+        }
+
+        if (REFRESH_IN_PROGRESS) return;
+        REFRESH_IN_PROGRESS = true;
 
         var startDate = new Date();
         startDate.setDate(startDate.getDate() - 365 * 2 - 30);
@@ -133,12 +237,18 @@ var App = (function () {
             completed++;
             updateLoadingProgress(completed, total);
             if (completed >= total) {
+                REFRESH_IN_PROGRESS = false;
                 showLoading(false);
                 SELECTED_DATE = null;
                 updateDatePickerMax();
                 renderAll();
+                saveDataSnapshot();
+                if (CURRENT_TAB === "data" && CHART_DATA) renderDataCharts();
                 if (errors.length > 0) {
                     console.warn("数据获取警告:", errors);
+                    if (force) showToast("数据更新完成，部分指数暂无新数据");
+                } else if (force) {
+                    showToast("市场数据已更新");
                 }
             }
         }
@@ -232,19 +342,29 @@ var App = (function () {
     function getDataForDate(idxData, targetDate) {
         if (!targetDate) return idxData;
         var i = findClosestTradeIdx(idxData.allDates, targetDate);
-        if (i < 0) return idxData;
+        while (i >= 0 && idxData.allScores && idxData.allScores[i] === null) i--;
+        if (i < 0) {
+            return {
+                code: idxData.code, display: idxData.display, group: idxData.group,
+                score: null, state: "暂无数据", stateColor: "#86868B", emotion: "暂无温度", emotionColor: "#86868B",
+                close: null, ret: null, rsi: null, pe: null, amount: null, ma5: null, ma20: null, ma60: null,
+                ranks: {}, allDates: idxData.allDates, allScores: idxData.allScores,
+                allCloses: idxData.allCloses, allRet: idxData.allRet, dates: idxData.dates,
+                scores: idxData.scores, closes: idxData.closes,
+            };
+        }
 
         var score = idxData.allScores[i];
-        var scoreRounded = score !== null ? score : 0;
-        var emo = AppConfig.getEmotion(scoreRounded);
+        var scoreRounded = score !== null && score !== undefined ? score : null;
+        var emo = scoreRounded === null ? { label: "暂无温度", color: "#86868B" } : AppConfig.getEmotion(scoreRounded);
 
         return {
             code: idxData.code,
             display: idxData.display,
             group: idxData.group,
             score: scoreRounded,
-            state: AppConfig.getMarketState(score !== null ? score / 100 : null).name,
-            stateColor: AppConfig.getMarketState(score !== null ? score / 100 : null).color,
+            state: scoreRounded === null ? "暂无数据" : AppConfig.getMarketState(scoreRounded / 100).name,
+            stateColor: scoreRounded === null ? "#86868B" : AppConfig.getMarketState(scoreRounded / 100).color,
             emotion: emo.label,
             emotionColor: emo.color,
             close: idxData.allCloses[i] || 0,
@@ -272,7 +392,10 @@ var App = (function () {
     // ━━━ 日期回溯 ━━━
     function updateDatePickerMax() {
         var el = document.getElementById("datePicker");
-        if (el) { el.max = formatDate(new Date()); el.value = ""; }
+        if (el) {
+            el.max = commonDataDate(getLatestTradeDate()) || formatDate(new Date());
+            el.value = "";
+        }
     }
 
     function onDateChange() {
@@ -283,8 +406,9 @@ var App = (function () {
 
         var val = el.value;
         if (val) {
-            SELECTED_DATE = val;
-            displayEl.textContent = "回溯至: " + formatDateCN(val);
+            SELECTED_DATE = commonDataDate(val) || val;
+            el.value = SELECTED_DATE;
+            displayEl.textContent = "回溯至: " + formatDateCN(SELECTED_DATE);
             displayEl.style.display = "inline";
             if (clearBtn) clearBtn.classList.add("show");
         } else {
@@ -310,6 +434,21 @@ var App = (function () {
 
     function getDisplayDateStr() {
         return formatDateFullCN(latestDataDateStr());
+    }
+
+    function updateMarginNotice() {
+        var notices = [
+            document.getElementById("marginNotice"),
+            document.getElementById("allMarginNotice"),
+        ];
+        var current = getLatestTradeDate();
+        var show = !SELECTED_DATE && dataNeedsRefresh(current);
+
+        notices.forEach(function (el) {
+            if (!el) return;
+            el.style.display = show ? "block" : "none";
+            el.innerHTML = show ? "<strong>融资余额未更新</strong>，今日温度暂不出值。" : "";
+        });
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -384,8 +523,117 @@ var App = (function () {
     // 渲染
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     function renderAll() {
+        ensurePosterLayout();
         renderPosters();
         renderAllPage();
+    }
+
+    function readPosterLayout() {
+        try {
+            var saved = JSON.parse(localStorage.getItem(POSTER_LAYOUT_KEY) || "null");
+            return saved && saved.order ? saved : { order: [], collapsed: {} };
+        } catch (e) {
+            return { order: [], collapsed: {} };
+        }
+    }
+
+    function savePosterLayout() {
+        var items = Array.prototype.slice.call(document.querySelectorAll("#pageHome > .poster-item"));
+        var collapsed = {};
+        items.forEach(function (item) { collapsed[item.getAttribute("data-poster-id")] = item.classList.contains("is-collapsed"); });
+        try {
+            localStorage.setItem(POSTER_LAYOUT_KEY, JSON.stringify({
+                order: items.map(function (item) { return item.getAttribute("data-poster-id"); }),
+                collapsed: collapsed,
+            }));
+        } catch (e) { /* ignore storage errors */ }
+    }
+
+    function ensurePosterLayout() {
+        var page = document.getElementById("pageHome");
+        if (!page) return;
+        var ids = ["posterLight", "posterCombined", "posterSector", "posterSmart", "posterExtremeCold", "posterExtremeHot"];
+        ids.forEach(function (id) {
+            var card = document.getElementById(id);
+            if (!card || card.parentElement.classList.contains("poster-item")) return;
+            var download = card.nextElementSibling;
+            var wrapper = document.createElement("section");
+            wrapper.className = "poster-item";
+            wrapper.setAttribute("data-poster-id", id);
+            card.parentElement.insertBefore(wrapper, card);
+            var tools = document.createElement("div");
+            tools.className = "poster-tools";
+            tools.innerHTML = '<button type="button" class="poster-up" title="海报上移" aria-label="海报上移">↑</button>' +
+                '<button type="button" class="poster-down" title="海报下移" aria-label="海报下移">↓</button>' +
+                '<button type="button" class="poster-collapse" title="折叠海报" aria-label="折叠海报" aria-expanded="true">⌃</button>';
+            tools.querySelector(".poster-up").onclick = function () { movePoster(id, -1); };
+            tools.querySelector(".poster-down").onclick = function () { movePoster(id, 1); };
+            tools.querySelector(".poster-collapse").onclick = function () { togglePoster(id); };
+            wrapper.appendChild(tools);
+            wrapper.appendChild(card);
+            if (download && download.classList.contains("dl-btn")) wrapper.appendChild(download);
+        });
+
+        var saved = readPosterLayout();
+        var wrappers = {};
+        Array.prototype.slice.call(page.children).filter(function (item) {
+            return item.classList && item.classList.contains("poster-item");
+        }).forEach(function (item) {
+            wrappers[item.getAttribute("data-poster-id")] = item;
+        });
+        var order = saved.order.filter(function (id) { return wrappers[id]; });
+        ids.forEach(function (id) { if (order.indexOf(id) < 0 && wrappers[id]) order.push(id); });
+        order.forEach(function (id) { page.appendChild(wrappers[id]); });
+        order.forEach(function (id, index) {
+            var item = wrappers[id];
+            var collapsed = !!(saved.collapsed && saved.collapsed[id]);
+            item.classList.toggle("is-collapsed", collapsed);
+            item.querySelector(".poster-collapse").textContent = collapsed ? "⌄" : "⌃";
+            item.querySelector(".poster-collapse").setAttribute("aria-expanded", collapsed ? "false" : "true");
+            item.querySelector(".poster-collapse").setAttribute("title", collapsed ? "展开海报" : "折叠海报");
+            item.querySelector(".poster-up").disabled = index === 0;
+            item.querySelector(".poster-down").disabled = index === order.length - 1;
+        });
+    }
+
+    function movePoster(id, direction) {
+        ensurePosterLayout();
+        var item = document.querySelector('#pageHome > .poster-item[data-poster-id="' + id + '"]');
+        if (!item) return;
+        var items = Array.prototype.slice.call(document.querySelectorAll("#pageHome > .poster-item"));
+        var index = items.indexOf(item);
+        var target = items[index + direction];
+        if (!target) return;
+        if (direction < 0) item.parentElement.insertBefore(item, target);
+        else item.parentElement.insertBefore(target, item);
+        savePosterLayout();
+        ensurePosterLayout();
+    }
+
+    function togglePoster(id) {
+        ensurePosterLayout();
+        var item = document.querySelector('#pageHome > .poster-item[data-poster-id="' + id + '"]');
+        if (!item) return;
+        item.classList.toggle("is-collapsed");
+        savePosterLayout();
+        ensurePosterLayout();
+    }
+
+    function togglePosterEdit() {
+        POSTER_EDITING = !POSTER_EDITING;
+        var page = document.getElementById("pageHome");
+        var button = document.getElementById("posterEditBtn");
+        if (page) page.classList.toggle("poster-editing", POSTER_EDITING);
+        if (button) {
+            button.textContent = POSTER_EDITING ? "完成" : "✎ 编辑";
+            button.title = POSTER_EDITING ? "完成海报编辑" : "编辑海报布局";
+            button.setAttribute("aria-label", button.title);
+        }
+    }
+
+    function resetPosterLayout() {
+        try { localStorage.removeItem(POSTER_LAYOUT_KEY); } catch (e) { /* ignore */ }
+        window.location.reload();
     }
 
     function renderPosters() {
@@ -393,24 +641,15 @@ var App = (function () {
         var ds = getDisplayDateStr();
         var extreme = findExtremeSectors();
 
+        updateMarginNotice();
         setText("homeDate", ds);
-        ["posterDate1", "posterDate2", "posterDate3", "posterDate4", "posterDate5", "posterDate6", "posterDate7"].forEach(function (id) {
+        ["posterDate2", "posterDate3", "posterDate4", "posterDate5", "posterDate6", "posterDate7"].forEach(function (id) {
             setText(id, ds);
         });
 
-        // 海报1：主要指数
+        // 主要指数仍在合并海报中展示，主页不再单独保留一张主要指数海报。
         var mainV = v.filter(function (x) { return x.group === "main" && DATA[x.code]; });
-        document.getElementById("mainCards").innerHTML = mainV.map(function (x) {
-            var d = getDisplayData(x.code);
-            if (!d) return '';
-            var ec = d.emotionColor || "#34C759";
-            return '<div class="idx-card" onclick="App.showDetail(\'' + x.code + '\')">' +
-                '<div class="idx-name">' + x.display + '</div>' +
-                '<div class="idx-right"><div class="idx-temp" style="color:' + ec + '">' + d.score + '°</div>' +
-                '<div class="idx-tag" style="background:' + ec + '">' + (d.emotion || "中性") + '</div></div></div>';
-        }).join("") || '<div style="text-align:center;color:#86868B;padding:20px">加载中...</div>';
-
-        // 海报2：站在光里
+        // 海报：站在光里
         var lightV = v.filter(function (x) { return x.group === "light" && DATA[x.code]; })
             .sort(function (a, b) {
                 var da = getDisplayData(a.code), db = getDisplayData(b.code);
@@ -586,14 +825,14 @@ var App = (function () {
         html += '<div class="d-nums"><span style="left:0%">0</span><span style="left:10%">10</span><span style="left:20%">20</span><span style="left:80%">80</span><span style="left:90%">90</span><span style="left:100%">100</span></div>';
         html += '<div class="d-labels"><span class="dl1">冰点</span><span class="dl2">恐惧</span><span class="dl3">中性</span><span class="dl4">贪婪</span><span class="dl5">狂热</span></div></div>';
 
-        html += '<div class="d-cards"><div class="d-card"><div class="v" style="color:' + ec + '">' + d.score + '℃</div><div class="l">市场温度</div></div>';
+        html += '<div class="d-cards"><div class="d-card"><div class="v" style="color:' + ec + '">' + (d.score === null ? "-" : d.score) + '℃</div><div class="l">市场温度</div></div>';
         html += '<div class="d-card"><div class="v" style="color:' + ec + '">' + el + '</div><div class="l">市场状态</div></div>';
         html += '<div class="d-card"><div class="v" style="font-size:18px">' + d.close + '</div><div class="l">' + x.display + '收盘</div>';
         if (d.ret !== null) html += '<div class="c ' + (d.ret >= 0 ? "up" : "dn") + '">' + (d.ret >= 0 ? "+" : "") + d.ret + '%</div>';
         html += '</div></div>';
 
         // 走势图
-        html += '<div class="d-section"><h3>市场温度 & ' + x.display + '走势</h3><div class="d-chart"><canvas id="detailChart"></canvas></div></div>';
+        html += '<div class="d-section" id="detailChartSection"><h3>市场温度 & ' + x.display + '走势<button class="chart-view-btn" onclick="App.toggleChartLandscape(\'detail\')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button></h3><div class="d-chart"><canvas id="detailChart"></canvas></div>' + rangeControlHtml("detail") + '</div>';
 
         // 近30个交易日温度日历（只显示交易日，无周末）
         html += '<div class="d-section"><h3>近30个交易日温度</h3>';
@@ -616,59 +855,111 @@ var App = (function () {
         document.getElementById("detailContent").innerHTML = html;
         switchTab("detail");
 
-        setTimeout(function () { renderCalendar(base); renderYearTable(base); }, 10);
+        setTimeout(function () { renderCalendar(d); renderYearTable(d); }, 10);
 
-        setTimeout(function () {
-            var ctx = document.getElementById("detailChart");
-            if (!ctx || !d.dates) return;
-            if (DETAIL_CHART) { DETAIL_CHART.destroy(); DETAIL_CHART = null; }
+        DETAIL_CODE = code;
+        setTimeout(function () { renderDetailChart(); }, 80);
+    }
 
-            var labels = d.dates.map(function (dt) { return dt.slice(5); });
-            DETAIL_CHART = new Chart(ctx, {
-                type: "line",
-                data: {
-                    labels: labels,
-                    datasets: [
-                        {
-                            label: "市场温度",
-                            data: d.scores,
-                            borderColor: "#FF9500",
-                            backgroundColor: "rgba(255,149,0,0.08)",
-                            fill: true,
-                            tension: 0.3,
-                            pointRadius: 0,
-                            borderWidth: 2,
-                            yAxisID: "y",
-                        },
-                        {
-                            label: x.display,
-                            data: d.closes,
-                            borderColor: "#007AFF",
-                            borderWidth: 1.5,
-                            pointRadius: 0,
-                            tension: 0.3,
-                            fill: false,
-                            yAxisID: "y1",
-                        },
-                    ],
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: { mode: "index", intersect: false },
-                    scales: {
-                        y: { min: 0, max: 100, position: "left", grid: { color: "#F5F5F7" },
-                            ticks: { callback: function (v) { return v + "℃"; }, font: { size: 10 } } },
-                        y1: { position: "right", grid: { drawOnChartArea: false },
-                            ticks: { callback: function (v) { return v.toLocaleString(); }, font: { size: 10 } } },
-                        x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 10 } } },
-                    },
-                    plugins: {
-                        legend: { labels: { usePointStyle: true, pointStyle: "circle", padding: 12, font: { size: 11 } } },
-                    },
-                },
-            });
-        }, 80);
+    function rangeControlHtml(key) {
+        return '<div class="chart-range" id="range-' + key + '">' +
+            '<div class="chart-range-head"><span>区间</span><span class="chart-range-value">拖动选择</span></div>' +
+            '<div class="chart-range-track">' +
+            '<input class="range-start" type="range" min="0" max="1" value="0" oninput="App.updateChartRange(\'' + key + '\')" aria-label="区间起点">' +
+            '<input class="range-end" type="range" min="0" max="1" value="1" oninput="App.updateChartRange(\'' + key + '\')" aria-label="区间终点">' +
+            '</div></div>';
+    }
+
+    function ensureChartRange(key, count) {
+        if (!count) return { start: 0, end: 0 };
+        var state = CHART_RANGES[key];
+        if (!state || state.count !== count) {
+            var windowSize = Math.min(180, count);
+            state = { start: count - windowSize, end: count - 1, count: count };
+            CHART_RANGES[key] = state;
+        }
+        state.start = Math.max(0, Math.min(state.start, count - 1));
+        state.end = Math.max(state.start, Math.min(state.end, count - 1));
+        var control = document.getElementById("range-" + key);
+        if (control) {
+            if (!control.querySelector(".range-start")) {
+                control.innerHTML = '<div class="chart-range-head"><span>区间</span><span class="chart-range-value">拖动选择</span></div>' +
+                    '<div class="chart-range-track">' +
+                    '<input class="range-start" type="range" min="0" max="1" value="0" oninput="App.updateChartRange(\'' + key + '\')" aria-label="区间起点">' +
+                    '<input class="range-end" type="range" min="0" max="1" value="1" oninput="App.updateChartRange(\'' + key + '\')" aria-label="区间终点">' +
+                    '</div>';
+            }
+            var start = control.querySelector(".range-start");
+            var end = control.querySelector(".range-end");
+            start.max = String(count - 1);
+            end.max = String(count - 1);
+            start.value = String(state.start);
+            end.value = String(state.end);
+            var value = control.querySelector(".chart-range-value");
+            if (value) value.textContent = "";
+        }
+        return state;
+    }
+
+    function updateChartRange(key) {
+        var control = document.getElementById("range-" + key);
+        if (!control) return;
+        var startInput = control.querySelector(".range-start");
+        var endInput = control.querySelector(".range-end");
+        var start = parseInt(startInput.value, 10);
+        var end = parseInt(endInput.value, 10);
+        if (start > end) {
+            if (document.activeElement === startInput) end = start;
+            else start = end;
+        }
+        CHART_RANGES[key] = { start: start, end: end, count: parseInt(startInput.max, 10) + 1 };
+        if (key === "detail") {
+            renderDetailChart();
+        } else {
+            renderSingleDataChart(key);
+        }
+    }
+
+    function updateRangeLabel(key, dates, state) {
+        var control = document.getElementById("range-" + key);
+        if (!control || !dates.length) return;
+        var value = control.querySelector(".chart-range-value");
+        if (value) value.textContent = dates[state.start] + " 至 " + dates[state.end];
+    }
+
+    function renderDetailChart() {
+        var base = DETAIL_CODE ? DATA[DETAIL_CODE] : null;
+        var x = DETAIL_CODE ? AppConfig.getIndexByCode(DETAIL_CODE) : null;
+        var ctx = document.getElementById("detailChart");
+        if (!ctx || !base || !base.allDates || !x) return;
+        if (DETAIL_CHART) { DETAIL_CHART.destroy(); DETAIL_CHART = null; }
+        var state = ensureChartRange("detail", base.allDates.length);
+        var dates = base.allDates.slice(state.start, state.end + 1);
+        var scores = base.allScores.slice(state.start, state.end + 1);
+        var closes = base.allCloses.slice(state.start, state.end + 1);
+        DETAIL_CHART = new Chart(ctx, {
+            type: "line",
+            data: { labels: dates.map(function (dt) { return dt.slice(5); }), datasets: [
+                { label: "市场温度", data: scores, borderColor: "#FF9500", backgroundColor: "rgba(255,149,0,.12)", fill: true, tension: .28, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.4, yAxisID: "y" },
+                { label: x.display, data: closes, borderColor: "#007AFF", backgroundColor: "rgba(0,122,255,.05)", borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: .28, fill: true, yAxisID: "y1" },
+            ] },
+            options: chartLineOptions("市场温度（℃）", x.display + "点位", true),
+        });
+        updateRangeLabel("detail", base.allDates, state);
+    }
+
+    function renderSingleDataChart(key) {
+        if (!CHART_DATA || typeof Chart === "undefined") return;
+        var charts = document.getElementById("dataCharts");
+        if (charts) charts.style.display = "block";
+        if (DATA_CHARTS[key]) {
+            DATA_CHARTS[key].destroy();
+            DATA_CHARTS[key] = null;
+        }
+        if (key === "market") renderMarketChart(CHART_DATA.market || []);
+        if (key === "margin") renderMarginChart(CHART_DATA.margin || []);
+        if (key === "marginFlow") renderMarginFlowChart(CHART_DATA.margin || []);
+        if (key === "etf") renderEtfChart(CHART_DATA.etf || { rows: [] });
     }
 
     // ━━━ 30个交易日温度日历（仅交易日，6列×5行）━━━
@@ -676,7 +967,8 @@ var App = (function () {
         var container = document.getElementById("calGrid");
         if (!container || !base.allDates) return;
 
-        var n = base.allDates.length;
+        var endIndex = SELECTED_DATE ? findClosestTradeIdx(base.allDates, SELECTED_DATE) : base.allDates.length - 1;
+        var n = Math.max(0, endIndex + 1);
         var count = Math.min(30, n);
         var start = n - count;
 
@@ -707,7 +999,8 @@ var App = (function () {
     function renderYearTable(base) {
         if (!base || !base.allDates) return;
 
-        var n = base.allDates.length;
+        var endIndex = SELECTED_DATE ? findClosestTradeIdx(base.allDates, SELECTED_DATE) : base.allDates.length - 1;
+        var n = Math.max(0, endIndex + 1);
         var count = Math.min(252, n);
         var start = n - count;
 
@@ -774,17 +1067,186 @@ var App = (function () {
         renderYearTableRows();
     }
 
+    // ━━━ 数据 Tab 图表 ━━━
+    function chartDataUrl() {
+        var android = window.Android && window.Android.isAndroid && window.Android.isAndroid();
+        return android ? "data/chart_data.json" : AppConfig.PROXY_BASE + "/api/chart_data";
+    }
+
+    function loadChartData() {
+        if (CHART_DATA) return Promise.resolve(CHART_DATA);
+        if (CHART_DATA_LOADING) return CHART_DATA_LOADING;
+
+        CHART_DATA_LOADING = fetch(chartDataUrl())
+            .then(function (response) {
+                if (!response.ok) throw new Error("图表接口返回 " + response.status);
+                return response.json();
+            })
+            .catch(function () {
+                return fetch("data/chart_data.json").then(function (response) {
+                    if (!response.ok) throw new Error("本地图表数据不可用");
+                    return response.json();
+                });
+            })
+            .then(function (data) {
+                if (data.error) throw new Error(data.error);
+                CHART_DATA = data;
+                renderDataCharts();
+                return data;
+            })
+            .catch(function (error) {
+                var status = document.getElementById("dataChartStatus");
+                if (status) status.textContent = "图表数据加载失败：" + error.message;
+                throw error;
+            });
+        return CHART_DATA_LOADING;
+    }
+
+    function destroyDataCharts() {
+        Object.keys(DATA_CHARTS).forEach(function (key) {
+            if (DATA_CHARTS[key]) DATA_CHARTS[key].destroy();
+        });
+        DATA_CHARTS = {};
+    }
+
+    function chartLineOptions(yLabel, y1Label, detail) {
+        var scales = {
+            x: { grid: { display: false }, ticks: { maxTicksLimit: detail ? 10 : 9, font: { size: 9 }, color: "#98A2B3", maxRotation: 0 } },
+            y: { position: "left", grid: { color: "rgba(148,163,184,.16)" }, border: { display: false }, ticks: { font: { size: 9 }, color: "#667085" }, title: { display: true, text: yLabel, color: "#667085", font: { size: 9, weight: "600" } } },
+        };
+        if (y1Label) {
+            scales.y1 = { position: "right", grid: { drawOnChartArea: false }, border: { display: false }, ticks: { font: { size: 9 }, color: "#667085" }, title: { display: true, text: y1Label, color: "#667085", font: { size: 9, weight: "600" } } };
+        }
+        return {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: "index", intersect: false },
+            scales: scales,
+            elements: { line: { capBezierPoints: true }, point: { hitRadius: 12 } },
+            animation: { duration: 450, easing: "easeOutQuart" },
+            plugins: {
+                legend: { labels: { usePointStyle: true, pointStyle: "circle", padding: 12, color: "#344054", font: { size: 10, weight: "600" } } },
+                tooltip: { backgroundColor: "rgba(15,23,42,.92)", padding: 10, cornerRadius: 8, displayColors: true, titleFont: { size: 11 }, bodyFont: { size: 10 } },
+            },
+        };
+    }
+
+    function dataChartOptions(yLabel, y1Label) {
+        return chartLineOptions(yLabel, y1Label, false);
+    }
+
+    function renderMarketChart(rows) {
+        var state = ensureChartRange("market", rows.length);
+        var visible = rows.slice(state.start, state.end + 1);
+        var labels = visible.map(function (row) { return row.date.slice(5); });
+        var priceMap = {};
+        var base = DATA["000001"];
+        if (base && base.allDates) {
+            base.allDates.forEach(function (date, index) { priceMap[date] = base.allCloses[index]; });
+        }
+        var price = visible.map(function (row) { return priceMap[row.date] === undefined ? null : priceMap[row.date]; });
+        DATA_CHARTS.market = new Chart(document.getElementById("marketChart"), {
+            data: {
+                labels: labels,
+                datasets: [
+                    { type: "line", label: "上证指数", data: price, borderColor: "#007AFF", backgroundColor: "rgba(0,122,255,0.08)", yAxisID: "y", pointRadius: 0, borderWidth: 1.8, tension: 0.25 },
+                    { type: "line", label: "成交额 20 日均线", data: visible.map(function (row) { return row.amount_ma20; }), borderColor: "#FF9500", backgroundColor: "rgba(255,149,0,0.08)", yAxisID: "y1", pointRadius: 0, borderWidth: 2.2, tension: 0.25, fill: true },
+                ],
+            },
+            options: dataChartOptions("指数点位", "成交额（亿元）"),
+        });
+        updateRangeLabel("market", rows.map(function (row) { return row.date; }), state);
+    }
+
+    function renderMarginChart(rows) {
+        var state = ensureChartRange("margin", rows.length);
+        var visible = rows.slice(state.start, state.end + 1);
+        var labels = visible.map(function (row) { return row.date.slice(5); });
+        DATA_CHARTS.margin = new Chart(document.getElementById("marginChart"), {
+            type: "line",
+            data: { labels: labels, datasets: [
+                { label: "融资余额", data: visible.map(function (row) { return row.balance; }), borderColor: "#007AFF", backgroundColor: "rgba(0,122,255,.07)", fill: true, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.2, tension: 0.25 },
+                { label: "阶段峰值", data: visible.map(function (row) { return row.peak; }), borderColor: "#FF3B30", borderDash: [6, 5], pointRadius: 0, borderWidth: 1.6, tension: 0.15 },
+                { label: "当前回撤", data: visible.map(function (row) { return row.drawdown; }), borderColor: "#AF52DE", pointRadius: 0, pointHoverRadius: 4, borderWidth: 2, tension: 0.25, yAxisID: "y1" },
+            ] },
+            options: dataChartOptions("融资余额（亿元）", "当前回撤（亿元）"),
+        });
+        updateRangeLabel("margin", rows.map(function (row) { return row.date; }), state);
+    }
+
+    function renderMarginFlowChart(rows) {
+        var flowState = ensureChartRange("marginFlow", rows.length);
+        var flowRows = rows.slice(flowState.start, flowState.end + 1);
+        DATA_CHARTS.marginFlow = new Chart(document.getElementById("marginFlowChart"), {
+            type: "line",
+            data: { labels: flowRows.map(function (row) { return row.date.slice(5); }), datasets: [
+                { label: "单日净买入", data: flowRows.map(function (row) { return row.net_buy; }), borderColor: "#34C759", backgroundColor: "rgba(52,199,89,.08)", fill: true, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2, tension: 0.2 },
+                { label: "融资余额", data: flowRows.map(function (row) { return row.balance; }), borderColor: "#007AFF", pointRadius: 0, pointHoverRadius: 4, borderWidth: 1.8, tension: 0.25, yAxisID: "y1" },
+            ] },
+            options: dataChartOptions("单日净买入（亿元）", "融资余额（亿元）"),
+        });
+        updateRangeLabel("marginFlow", rows.map(function (row) { return row.date; }), flowState);
+    }
+
+    function renderEtfChart(etf) {
+        var state = ensureChartRange("etf", etf.rows.length);
+        var visible = etf.rows.slice(state.start, state.end + 1);
+        var labels = visible.map(function (row) { return row.date.slice(5); });
+        var datasets = [{
+            label: "合计净流入",
+            data: visible.map(function (row) { return row.total; }),
+            borderColor: "#1D1D1F",
+            backgroundColor: "rgba(29,29,31,0.08)",
+            borderWidth: 2.4,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.25,
+            fill: true,
+        }];
+        DATA_CHARTS.etf = new Chart(document.getElementById("etfChart"), {
+            type: "line",
+            data: { labels: labels, datasets: datasets },
+            options: dataChartOptions("净流入（亿元）"),
+        });
+        updateRangeLabel("etf", etf.rows.map(function (row) { return row.date; }), state);
+    }
+
+    function renderDataCharts() {
+        var status = document.getElementById("dataChartStatus");
+        var charts = document.getElementById("dataCharts");
+        if (!CHART_DATA || typeof Chart === "undefined") return;
+        destroyDataCharts();
+        if (charts) charts.style.display = "block";
+        renderMarketChart(CHART_DATA.market || []);
+        renderMarginChart(CHART_DATA.margin || []);
+        renderMarginFlowChart(CHART_DATA.margin || []);
+        renderEtfChart(CHART_DATA.etf || { rows: [] });
+        if (status) status.style.display = "none";
+        var update = document.getElementById("dataUpdatedAt");
+        if (update && CHART_DATA.market && CHART_DATA.market.length) {
+            update.textContent = "数据范围：" + CHART_DATA.market[0].date + " 至 " + CHART_DATA.market[CHART_DATA.market.length - 1].date;
+        }
+    }
+
+    function openDataPage() {
+        var status = document.getElementById("dataChartStatus");
+        if (status && !CHART_DATA) status.style.display = "block";
+        loadChartData().catch(function () {});
+        if (CHART_DATA) renderDataCharts();
+    }
+
     // ━━━ Tab 切换 ━━━
     function switchTab(name) {
         CURRENT_TAB = name;
         document.querySelectorAll(".page").forEach(function (p) { p.classList.remove("active"); });
         document.querySelectorAll(".btab").forEach(function (b) { b.classList.remove("active"); });
-        var map = { home: "pageHome", all: "pageAll", detail: "pageDetail" };
+        var map = { home: "pageHome", all: "pageAll", data: "pageData", detail: "pageDetail" };
         var el = document.getElementById(map[name]);
         if (el) el.classList.add("active");
         var tabs = document.querySelectorAll(".btab");
-        var idx = { home: 0, all: 1, detail: 2 };
+        var idx = { home: 0, all: 1, data: 2 };
         if (tabs[idx[name]]) tabs[idx[name]].classList.add("active");
+        if (name === "data") openDataPage();
     }
 
     // ━━━ 设置面板 ━━━
@@ -945,8 +1407,9 @@ var App = (function () {
                     showToast("✅ token更新成功");
                     input.value = "";
                     checkTokenStatus();
+                    clearDataSnapshot();
                     DATA = {};
-                    fetchLocal();
+                    fetchLocal(true);
                 } else {
                     showToast("❌ " + (res.error || "更新失败"));
                 }
@@ -1175,11 +1638,53 @@ var App = (function () {
         }, 2000);
     }
 
+    function resizeChart(key) {
+        var chart = key === "detail" ? DETAIL_CHART : DATA_CHARTS[key];
+        if (chart) chart.resize();
+    }
+
+    function toggleChartLandscape(key) {
+        var sectionId = key === "detail" ? "detailChartSection" : "dataSection-" + key;
+        var section = document.getElementById(sectionId);
+        if (!section) return;
+
+        var opening = !section.classList.contains("chart-landscape");
+        document.querySelectorAll(".chart-landscape").forEach(function (other) {
+            other.classList.remove("chart-landscape");
+            var otherButton = other.querySelector(".chart-view-btn");
+            if (otherButton) {
+                otherButton.textContent = "⤢";
+                otherButton.title = "横屏查看此图";
+                otherButton.setAttribute("aria-label", "横屏查看此图");
+            }
+        });
+
+        if (opening) {
+            section.classList.add("chart-landscape");
+            var button = section.querySelector(".chart-view-btn");
+            if (button) {
+                button.textContent = "↙";
+                button.title = "退出横屏查看";
+                button.setAttribute("aria-label", "退出横屏查看");
+            }
+            ACTIVE_CHART_LANDSCAPE = key;
+        } else {
+            ACTIVE_CHART_LANDSCAPE = null;
+        }
+
+        if (window.Android && window.Android.setLandscape) {
+            try { window.Android.setLandscape(opening); } catch (e) { /* browser preview */ }
+        }
+        setTimeout(function () { resizeChart(key); }, 180);
+    }
+
     // ━━━ 初始化 ━━━
     function init() {
         tickClock();
         setInterval(tickClock, 30000);
-        fetchLocal();
+        ensurePosterLayout();
+        loadDataSnapshot();
+        fetchLocal(false);
     }
 
     // ━━━ 公开接口 ━━━
@@ -1197,7 +1702,17 @@ var App = (function () {
         updateToken: updateToken,
         downloadPoster: downloadPoster,
         downloadCalPoster: downloadCalPoster,
+        movePoster: movePoster,
+        togglePoster: togglePoster,
+        resetPosterLayout: resetPosterLayout,
+        updateChartRange: updateChartRange,
+        togglePosterEdit: togglePosterEdit,
+        toggleChartLandscape: toggleChartLandscape,
         fetchLocal: fetchLocal,
+        refreshData: function () {
+            showToast("正在刷新市场数据...");
+            fetchLocal(true);
+        },
         showToast: showToast,
         onDateChange: onDateChange,
         clearDateFilter: clearDateFilter,

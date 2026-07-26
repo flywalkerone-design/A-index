@@ -2,6 +2,7 @@ package com.stocktemp.app;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.pm.ActivityInfo;
 import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
@@ -10,6 +11,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.View;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
@@ -98,6 +100,8 @@ public class MainActivity extends AppCompatActivity {
 
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient());
+        webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        webView.setVerticalScrollBarEnabled(false);
 
         // 加载本地 HTML
         webView.loadUrl("file:///android_asset/www/index.html");
@@ -106,6 +110,14 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void hideSystemUI() {
+        getWindow().getDecorView().setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_FULLSCREEN
+        );
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         WindowInsetsControllerCompat controller =
             new WindowInsetsControllerCompat(getWindow(), getWindow().getDecorView());
@@ -206,6 +218,13 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public boolean isAndroid() {
             return true;
+        }
+
+        @JavascriptInterface
+        public void setLandscape(boolean landscape) {
+            setRequestedOrientation(landscape
+                ? ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                : ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
         }
 
         @JavascriptInterface
