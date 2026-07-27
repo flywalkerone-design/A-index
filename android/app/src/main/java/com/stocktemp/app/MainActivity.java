@@ -220,6 +220,27 @@ public class MainActivity extends AppCompatActivity {
             return true;
         }
 
+        /**
+         * 读取 assets 下的文本文件并返回内容（用于 file:// 页面加载本地 JSON）。
+         * 因为 Android WebView 的 fetch() 不支持 file:// 协议，数据 Tab 通过此桥读取 chart_data.json。
+         * path 相对于 assets 根，例如 "www/data/chart_data.json"。
+         */
+        @JavascriptInterface
+        public String readAsset(String path) {
+            try {
+                java.io.InputStream is = getAssets().open(path);
+                java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(is, java.nio.charset.StandardCharsets.UTF_8));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line);
+                reader.close();
+                return sb.toString();
+            } catch (Exception e) {
+                return "{\"error\":\"readAsset 失败: " + e.getMessage() + "\"}";
+            }
+        }
+
         @JavascriptInterface
         public void setLandscape(boolean landscape) {
             setRequestedOrientation(landscape

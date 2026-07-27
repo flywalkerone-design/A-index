@@ -1073,23 +1073,58 @@ var App = (function () {
         return android ? "data/chart_data.json" : AppConfig.PROXY_BASE + "/api/chart_data";
     }
 
+    function loadChartText(url) {
+        return new Promise(function (resolve, reject) {
+            var isLocalAsset = !/^https?:/i.test(url);
+            // Android 原生桥：file:// 页面下 fetch 不支持 file://，优先用 readAsset 读取 assets
+            if (isLocalAsset && window.Android && window.Android.readAsset) {
+                var assetPath = url.indexOf("www/") === 0 ? url : ("www/" + url);
+                try {
+                    var raw = window.Android.readAsset(assetPath);
+                    resolve(raw);
+                } catch (e) {
+                    reject(e instanceof Error ? e : new Error(String(e)));
+                }
+                return;
+            }
+            // XHR 兼容 file://（status 可能为 0），其次 fetch
+            if (typeof XMLHttpRequest !== "undefined") {
+                var xhr = new XMLHttpRequest();
+                xhr.open("GET", url, true);
+                xhr.onreadystatechange = function () {
+                    if (xhr.readyState === 4) {
+                        if (xhr.status === 200 || (xhr.status === 0 && xhr.responseText)) {
+                            resolve(xhr.responseText);
+                        } else {
+                            reject(new Error("加载失败 status=" + xhr.status));
+                        }
+                    }
+                };
+                xhr.onerror = function () { reject(new Error("网络错误")); };
+                try { xhr.send(); } catch (e) { reject(e instanceof Error ? e : new Error(String(e))); }
+            } else {
+                fetch(url).then(function (r) {
+                    if (!r.ok) throw new Error("接口返回 " + r.status);
+                    return r.text();
+                }).then(resolve).catch(reject);
+            }
+        });
+    }
+
     function loadChartData() {
         if (CHART_DATA) return Promise.resolve(CHART_DATA);
         if (CHART_DATA_LOADING) return CHART_DATA_LOADING;
 
-        CHART_DATA_LOADING = fetch(chartDataUrl())
-            .then(function (response) {
-                if (!response.ok) throw new Error("图表接口返回 " + response.status);
-                return response.json();
-            })
+        var primary = chartDataUrl();
+        var fallback = "data/chart_data.json";
+
+        CHART_DATA_LOADING = loadChartText(primary)
+            .then(function (text) { return JSON.parse(text); })
             .catch(function () {
-                return fetch("data/chart_data.json").then(function (response) {
-                    if (!response.ok) throw new Error("本地图表数据不可用");
-                    return response.json();
-                });
+                return loadChartText(fallback).then(function (text) { return JSON.parse(text); });
             })
             .then(function (data) {
-                if (data.error) throw new Error(data.error);
+                if (data && data.error) throw new Error(data.error);
                 CHART_DATA = data;
                 renderDataCharts();
                 return data;
@@ -1214,7 +1249,14 @@ var App = (function () {
     function renderDataCharts() {
         var status = document.getElementById("dataChartStatus");
         var charts = document.getElementById("dataCharts");
-        if (!CHART_DATA || typeof Chart === "undefined") return;
+        if (typeof Chart === "undefined") {
+            if (status) { status.style.display = "block"; status.textContent = "图表库未加载，请确认 js/vendor/chart.umd.min.js 存在。"; }
+            return;
+        }
+        if (!CHART_DATA) {
+            if (status) { status.style.display = "block"; status.textContent = "图表数据尚未加载"; }
+            return;
+        }
         destroyDataCharts();
         if (charts) charts.style.display = "block";
         renderMarketChart(CHART_DATA.market || []);

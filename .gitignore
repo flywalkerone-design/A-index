@@ -38,3 +38,6 @@ android/build/
 
 # Token (sensitive)
 ifind_token.txt
+
+# WorkBuddy agent memory / runtime
+.workbuddy/
