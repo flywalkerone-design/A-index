@@ -7,15 +7,25 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.stocktemp.app"
+        applicationId = "com.stocktemp.app2"
         minSdk = 24
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.5.0"
+        versionCode = 6
+        versionName = "1.6.0"
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("../release.keystore")
+            storePassword = "stocktemp2024"
+            keyAlias = "release-key"
+            keyPassword = "stocktemp2024"
+        }
     }
 
     buildTypes {
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
