@@ -112,21 +112,52 @@ def _read_margin_sheet(path):
     return rows
 
 
+# 宽基 ETF 净流入统计范围（6 位代码，匹配 Excel 表头中的 .OF/.SH 后缀）
+WIDEBASE_ETF_CODES = {
+    "510300",  # 沪深300ETF华泰柏瑞
+    "510050",  # 上证50ETF华夏
+    "588000",  # 科创50ETF华夏
+    "512100",  # 中证1000ETF南方
+    "159915",  # 创业板ETF易方达
+    "510310",  # 沪深300ETF易方达
+    "510500",  # 中证500ETF南方
+    "510330",  # 沪深300ETF华夏
+    "588080",  # 科创50ETF易方达
+    "159919",  # 沪深300ETF嘉实
+    "159845",  # 中证1000ETF华夏
+}
+
+
 def _read_etf_sheet(path):
     sheet = pd.read_excel(path, sheet_name="ETF净流入", header=None)
-    rows = []
 
+    # 从第 2 行（index=2）解析每列的 ETF 代码，匹配目标范围
+    code_row = sheet.iloc[2] if len(sheet) > 2 else None
+    target_cols = []
+    if code_row is not None:
+        for col_idx in range(1, len(code_row)):
+            raw = str(code_row.iloc[col_idx]) if pd.notna(code_row.iloc[col_idx]) else ""
+            # 提取 6 位数字代码（去掉 .OF/.SH 等后缀）
+            code = raw.strip().split(".")[0]
+            if code in WIDEBASE_ETF_CODES:
+                target_cols.append(col_idx)
+
+    # 如果没匹配到任何列（表头格式异常），回退到原始范围 1-7
+    if not target_cols:
+        target_cols = list(range(1, 8))
+
+    rows = []
     for _, row in sheet.iloc[4:].iterrows():
         date = _date(row.iloc[0])
         if date is None:
             continue
         flows = []
-        for index in range(1, 8):
-            value = _number(row.iloc[index])
+        for col_idx in target_cols:
+            if col_idx >= len(row):
+                continue
+            value = _number(row.iloc[col_idx])
             flows.append(None if value is None else value / 1e8)
-        total = _number(row.iloc[8])
-        if total is None:
-            total = sum(value for value in flows if value is not None)
+        total = sum(v for v in flows if v is not None) if flows else None
         rows.append({"date": date, "total": total})
 
     rows.reverse()
