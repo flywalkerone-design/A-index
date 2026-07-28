@@ -1,13 +1,232 @@
-"""Load the user-provided workbook data used by the Data tab."""
+"""Data tab chart data — primary source: iFinD API, fallback: Excel."""
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 
+from utils.ifind_data import _ensure_token, _session, _headers
+from utils.logger import log
 
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR.parent / "数据文件"
 
+DATA_START_DATE = "2024-01-01"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# iFinD API 数据获取
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 11 只宽基 ETF（6位代码 -> iFinD .OF 代码）
+ETF_IFIND_CODES = [
+    "510300.OF", "510050.OF", "588000.OF", "512100.OF",
+    "159915.OF", "510310.OF", "510500.OF", "510330.OF",
+    "588080.OF", "159919.OF", "159845.OF",
+]
+
+# 融资余额：上证指数 + 深证A股，求和得沪深合计
+MARGIN_CODES = ["000001.SH", "399107.SZ"]
+
+
+def _date_sequence_chunk(codes, indicator, start, end, extra_params=None):
+    """调用 date_sequence API，返回 {date_str: value} 列表"""
+    para = {
+        "codes": codes,
+        "startdate": start.replace("-", ""),
+        "enddate": end.replace("-", ""),
+        "functionpara": {"Days": "Tradedays", "Fill": "Previous"},
+        "indipara": [{"indicator": indicator, "indiparams": [""]}],
+    }
+    if extra_params:
+        para["functionpara"].update(extra_params)
+
+    resp = _session.post(
+        "https://quantapi.51ifind.com/api/v1/date_sequence",
+        json=para, headers=_headers(), timeout=60,
+    )
+    r = resp.json()
+    if r.get("errorcode") != 0:
+        log.warning(f"date_sequence error: {r.get('errmsg')} (codes={codes})")
+        return []
+
+    result = []
+    for table in r.get("tables", []):
+        thscode = table.get("thscode", "")
+        times = table.get("time", [])
+        vals = table.get("table", {}).get(indicator, [])
+        for i, t in enumerate(times):
+            date_str = str(t)[:10]
+            val = vals[i] if i < len(vals) else None
+            result.append({"date": date_str, "code": thscode, "value": val})
+    return result
+
+
+def _fetch_margin_ifind_direct(start, end):
+    """直接调 date_sequence 获取融资余额（使用 API 返回的日期，避免对齐错误）"""
+    from datetime import datetime as dt
+
+    all_rows = []
+    chunk_start = dt.strptime(start, "%Y-%m-%d")
+    chunk_end = dt.strptime(end, "%Y-%m-%d")
+
+    for code in MARGIN_CODES:
+        code_rows = []
+        cs = chunk_start
+        while cs <= chunk_end:
+            ce = min(cs + timedelta(days=550), chunk_end)
+            rows = _date_sequence_chunk(
+                code, "ths_margin_trading_balance_index",
+                cs.strftime("%Y-%m-%d"), ce.strftime("%Y-%m-%d"),
+            )
+            if not rows:
+                break
+            code_rows.extend(rows)
+            if len(rows) < 10:
+                break
+            cs = ce + timedelta(days=1)
+
+        # 去重（chunk 边界可能重叠）
+        seen = set()
+        for r in code_rows:
+            if r["date"] not in seen:
+                seen.add(r["date"])
+                all_rows.append({"date": r["date"], "code": code, "value": r["value"]})
+
+    return all_rows
+
+
+def _fetch_market_from_ifind(start, end):
+    """上证指数日成交额 + 20日均线"""
+    from utils.ifind_data import fetch_index_history_ifind
+
+    df = fetch_index_history_ifind("000001.SH", start, end)
+    if df is None or df.empty:
+        return []
+
+    rows = []
+    amounts = df["amount"].tolist()
+    for i in range(len(df)):
+        amt = amounts[i]
+        window = [a for a in amounts[max(0, i - 19):i + 1] if pd.notna(a)]
+        ma20 = sum(window) / len(window) if window else None
+        rows.append({
+            "date": df.iloc[i]["date"].strftime("%Y-%m-%d"),
+            "amount": round(float(amt), 2) if pd.notna(amt) else None,
+            "amount_ma20": round(float(ma20), 2) if ma20 else None,
+        })
+    return rows
+
+
+def _fetch_margin_from_ifind(start, end):
+    """沪深两市融资余额合计（SH + SZ 求和）+ 峰值/回撤/净买入"""
+    raw = _fetch_margin_ifind_direct(start, end)
+    if not raw:
+        return []
+
+    # 按日期聚合：SH + SZ 求和
+    daily = {}
+    for r in raw:
+        d = r["date"]
+        v = r["value"]
+        if d not in daily:
+            daily[d] = {"sh": None, "sz": None}
+        if r["code"] == "000001.SH":
+            daily[d]["sh"] = float(v) if v is not None else None
+        elif r["code"] == "399107.SZ":
+            daily[d]["sz"] = float(v) if v is not None else None
+
+    # 排序
+    sorted_dates = sorted(daily.keys())
+    rows = []
+    for d in sorted_dates:
+        sh = daily[d]["sh"]
+        sz = daily[d]["sz"]
+        parts = [v for v in [sh, sz] if v is not None]
+        total = sum(parts) / 1e8 if parts else None  # 元 -> 亿元
+        rows.append({"date": d, "balance": total})
+
+    # T+1 调整：最新交易日余额可能未发布或异常跳变
+    prev_balance = None
+    latest_idx = len(rows) - 1
+    for i, item in enumerate(rows):
+        b = item["balance"]
+        is_missing = b is None or b <= 0
+        is_latest_jump = (
+            i == latest_idx
+            and prev_balance is not None
+            and b is not None
+            and b < prev_balance * 0.8
+        )
+        if is_missing or is_latest_jump:
+            item["balance"] = prev_balance
+            item["t_plus_one_adjusted"] = True
+        else:
+            item["t_plus_one_adjusted"] = False
+        if item["balance"] is not None:
+            prev_balance = item["balance"]
+
+    # 计算峰值、回撤、净买入
+    peak = None
+    prev_balance = None
+    for item in rows:
+        b = item["balance"]
+        if b is not None:
+            peak = max(peak, b) if peak is not None else b
+        item["peak"] = peak
+        item["drawdown"] = max(0.0, peak - b) if (peak is not None and b is not None) else 0.0
+
+        if item.get("t_plus_one_adjusted") and prev_balance is not None:
+            item["net_buy"] = 0.0
+        elif b is not None and prev_balance is not None:
+            item["net_buy"] = round(b - prev_balance, 2)
+        else:
+            item["net_buy"] = 0.0
+
+        if b is not None:
+            prev_balance = b
+
+    return rows
+
+
+def _fetch_etf_from_ifind(start, end):
+    """11 只宽基 ETF 净流入合计（一次批量请求）"""
+    codes = ",".join(ETF_IFIND_CODES)
+
+    # 分段请求（每段 ~500 天）
+    from datetime import datetime as dt
+    all_rows = []
+    cs = dt.strptime(start, "%Y-%m-%d")
+    end_dt = dt.strptime(end, "%Y-%m-%d")
+    while cs <= end_dt:
+        ce = min(cs + timedelta(days=550), end_dt)
+        rows = _date_sequence_chunk(
+            codes, "ths_netcashflow_fund",
+            cs.strftime("%Y-%m-%d"), ce.strftime("%Y-%m-%d"),
+        )
+        all_rows.extend(rows)
+        if len(rows) < 10:
+            break
+        cs = ce + timedelta(days=1)
+
+    if not all_rows:
+        return {"rows": []}
+
+    # 按日期汇总
+    daily = {}
+    for r in all_rows:
+        d = r["date"]
+        v = r["value"]
+        if v is not None:
+            val_yi = float(v) / 1e8  # 元 -> 亿元
+            daily[d] = daily.get(d, 0) + val_yi
+
+    rows = [{"date": d, "total": round(v, 2)} for d, v in sorted(daily.items())]
+    return {"rows": rows}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Excel fallback（保留原逻辑）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _number(value):
     if value is None or pd.isna(value):
@@ -41,7 +260,6 @@ def _read_market_sheet(path):
                 else None
             ),
         })
-
     rows.reverse()
     values = [item["amount"] for item in rows]
     for index, item in enumerate(rows):
@@ -65,11 +283,7 @@ def _read_margin_sheet(path):
             "drawdown": _number(row.iloc[3]),
             "net_buy": _number(row.iloc[4]),
         })
-
     rows.reverse()
-
-    # 融资余额是 T+1 发布的。接口在最新交易日可能返回 0、空值，
-    # 或者把尚未确认的余额映射成异常跳变；图表应延续上一有效交易日。
     previous_balance = None
     latest_index = len(rows) - 1
     for index, item in enumerate(rows):
@@ -86,10 +300,8 @@ def _read_margin_sheet(path):
             item["t_plus_one_adjusted"] = True
         else:
             item["t_plus_one_adjusted"] = False
-
         if item["balance"] is not None:
             previous_balance = item["balance"]
-
     peak_balance = None
     previous_balance = None
     for item in rows:
@@ -100,52 +312,34 @@ def _read_margin_sheet(path):
             item["peak"] = peak_balance
         if item["peak"] is not None and balance is not None:
             item["drawdown"] = max(0.0, item["peak"] - balance)
-
-        # 余额被 T+1 保护修正时，净买入也必须同步修正，避免产生假断崖。
         if item["t_plus_one_adjusted"] and previous_balance is not None:
             item["net_buy"] = 0.0
         elif item["net_buy"] is None and balance is not None and previous_balance is not None:
             item["net_buy"] = balance - previous_balance
-
         if balance is not None:
             previous_balance = balance
     return rows
 
 
-# 宽基 ETF 净流入统计范围（6 位代码，匹配 Excel 表头中的 .OF/.SH 后缀）
 WIDEBASE_ETF_CODES = {
-    "510300",  # 沪深300ETF华泰柏瑞
-    "510050",  # 上证50ETF华夏
-    "588000",  # 科创50ETF华夏
-    "512100",  # 中证1000ETF南方
-    "159915",  # 创业板ETF易方达
-    "510310",  # 沪深300ETF易方达
-    "510500",  # 中证500ETF南方
-    "510330",  # 沪深300ETF华夏
-    "588080",  # 科创50ETF易方达
-    "159919",  # 沪深300ETF嘉实
-    "159845",  # 中证1000ETF华夏
+    "510300", "510050", "588000", "512100",
+    "159915", "510310", "510500", "510330",
+    "588080", "159919", "159845",
 }
 
 
 def _read_etf_sheet(path):
     sheet = pd.read_excel(path, sheet_name="ETF净流入", header=None)
-
-    # 从第 2 行（index=2）解析每列的 ETF 代码，匹配目标范围
     code_row = sheet.iloc[2] if len(sheet) > 2 else None
     target_cols = []
     if code_row is not None:
         for col_idx in range(1, len(code_row)):
             raw = str(code_row.iloc[col_idx]) if pd.notna(code_row.iloc[col_idx]) else ""
-            # 提取 6 位数字代码（去掉 .OF/.SH 等后缀）
             code = raw.strip().split(".")[0]
             if code in WIDEBASE_ETF_CODES:
                 target_cols.append(col_idx)
-
-    # 如果没匹配到任何列（表头格式异常），回退到原始范围 1-7
     if not target_cols:
         target_cols = list(range(1, 8))
-
     rows = []
     seen_dates = set()
     for _, row in sheet.iloc[4:].iterrows():
@@ -161,19 +355,49 @@ def _read_etf_sheet(path):
             flows.append(None if value is None else value / 1e8)
         total = sum(v for v in flows if v is not None) if flows else None
         rows.append({"date": date, "total": total})
-
     rows.sort(key=lambda r: r["date"])
     return {"rows": rows}
 
 
-def load_chart_data(data_dir=DATA_DIR):
+def _load_from_excel(data_dir):
+    """Excel fallback"""
+    if data_dir is None:
+        data_dir = DATA_DIR
+    data_dir = Path(data_dir)
     market_file = data_dir / "上证走势与融资余额.xlsx"
     etf_file = data_dir / "ETF规模净流入统计.xlsx"
     if not market_file.exists() or not etf_file.exists():
-        raise FileNotFoundError("数据文件目录中缺少两个 Excel 数据文件")
-
+        raise FileNotFoundError("数据文件目录中缺少 Excel 数据文件")
     return {
         "market": _read_market_sheet(market_file),
         "margin": _read_margin_sheet(market_file),
         "etf": _read_etf_sheet(etf_file),
     }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 主入口
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def load_chart_data(data_dir=None):
+    """从 iFinD API 加载数据 Tab 图表数据（失败时回退 Excel）"""
+    end = datetime.now().strftime("%Y-%m-%d")
+    start = DATA_START_DATE
+
+    try:
+        _ensure_token()
+        log.info("从 iFinD API 加载图表数据...")
+
+        market = _fetch_market_from_ifind(start, end)
+        margin = _fetch_margin_from_ifind(start, end)
+        etf = _fetch_etf_from_ifind(start, end)
+
+        log.info(
+            f"图表数据加载完成: market={len(market)}条, "
+            f"margin={len(margin)}条, etf={len(etf.get('rows', []))}条"
+        )
+        return {"market": market, "margin": margin, "etf": etf}
+
+    except Exception as e:
+        log.warning(f"iFinD API 失败，回退 Excel: {e}")
+        return _load_from_excel(data_dir)

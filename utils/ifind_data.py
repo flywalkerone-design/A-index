@@ -346,6 +346,16 @@ def fetch_index_history_ifind(code: str, startdate: str, enddate: str) -> pd.Dat
         if chunks:
             part = pd.concat(chunks, ignore_index=True)
             part = part.drop_duplicates(subset="date", keep="last").sort_values("date").reset_index(drop=True)
+            # 格式转换（新数据，缓存数据已在上次保存时转换过）
+            part = part.rename(columns={"changeRatio": "change_pct", "pe_ttm_index": "pe"})
+            for col in ["open", "high", "low", "close", "change_pct", "volume", "amount", "pe"]:
+                if col in part.columns:
+                    part[col] = pd.to_numeric(part[col], errors="coerce")
+            if "amount" in part.columns:
+                part["amount"] = part["amount"] / 1e8
+            if "volume" in part.columns:
+                part["volume"] = part["volume"] / 10000
+            part["stock_count"] = None
             new_parts.append(part)
             log.info(f"  新增 {len(part)} 条 ({time.time()-t0:.1f}s)")
 
@@ -362,24 +372,10 @@ def fetch_index_history_ifind(code: str, startdate: str, enddate: str) -> pd.Dat
     df = pd.concat(frames, ignore_index=True)
     df = df.drop_duplicates(subset="date", keep="last").sort_values("date").reset_index(drop=True)
 
-    # ━━━ 5. 格式转换 ━━━
-    df = df.rename(columns={
-        "changeRatio": "change_pct",
-        "pe_ttm_index": "pe",
-    })
-    # 缓存列与增量接口字段可能在重命名后同名，保留最后一列（最新数据）。
+    # ━━━ 5. 列对齐（转换已在新数据步骤完成，缓存数据已转换过）━━━
     df = df.loc[:, ~df.columns.duplicated(keep="last")]
-    for col in ["open", "high", "low", "close", "change_pct", "volume", "amount", "pe"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # iFinD amount 为元、volume 为股；中证接口习惯使用亿元/万手
-    if "amount" in df.columns:
-        df["amount"] = df["amount"] / 1e8
-    if "volume" in df.columns:
-        df["volume"] = df["volume"] / 10000
-
-    df["stock_count"] = None
+    if "stock_count" not in df.columns:
+        df["stock_count"] = None
     keep_cols = ["date", "open", "high", "low", "close", "change_pct",
                  "volume", "amount", "stock_count", "pe"]
     df = df[[c for c in keep_cols if c in df.columns]]
