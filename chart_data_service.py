@@ -147,10 +147,12 @@ def _read_etf_sheet(path):
         target_cols = list(range(1, 8))
 
     rows = []
+    seen_dates = set()
     for _, row in sheet.iloc[4:].iterrows():
         date = _date(row.iloc[0])
-        if date is None:
+        if date is None or date in seen_dates:
             continue
+        seen_dates.add(date)
         flows = []
         for col_idx in target_cols:
             if col_idx >= len(row):
@@ -160,7 +162,7 @@ def _read_etf_sheet(path):
         total = sum(v for v in flows if v is not None) if flows else None
         rows.append({"date": date, "total": total})
 
-    rows.reverse()
+    rows.sort(key=lambda r: r["date"])
     return {"rows": rows}
 
 
