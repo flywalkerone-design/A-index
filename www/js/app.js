@@ -15,8 +15,12 @@ var App = (function () {
     var DATA_CHARTS = {};
     var CHART_DATA = null;
     var CHART_DATA_LOADING = null;
+    var CHART_DATA_TIME = 0;
+    var CHART_DATA_TTL = 5 * 60 * 1000; // 5分钟内不重复请求
     var CHART_RANGES = {};
     var DETAIL_CODE = null;
+    var MARGIN_SORT_KEY = "date";
+    var MARGIN_SORT_ASC = false; // 默认日期倒序（最新在前）
     var POSTER_LAYOUT_KEY = "a_stock_poster_layout_v1";
     var POSTER_EDITING = false;
     var ACTIVE_CHART_LANDSCAPE = null;
@@ -1070,7 +1074,12 @@ var App = (function () {
     // ━━━ 数据 Tab 图表 ━━━
     function chartDataUrl() {
         var android = window.Android && window.Android.isAndroid && window.Android.isAndroid();
-        return android ? "data/chart_data.json" : AppConfig.PROXY_BASE + "/api/chart_data";
+        if (android) {
+            var server = localStorage.getItem("chart_data_server");
+            if (server) return server.replace(/\/+$/, "") + "/api/chart_data";
+            return "data/chart_data.json";
+        }
+        return AppConfig.PROXY_BASE + "/api/chart_data";
     }
 
     function loadChartText(url) {
@@ -1111,8 +1120,15 @@ var App = (function () {
         });
     }
 
-    function loadChartData() {
-        if (CHART_DATA) return Promise.resolve(CHART_DATA);
+    function loadChartData(force) {
+        var now = Date.now();
+        if (!force && CHART_DATA && (now - CHART_DATA_TIME) < CHART_DATA_TTL) {
+            return Promise.resolve(CHART_DATA);
+        }
+        if (force) {
+            CHART_DATA = null;
+            destroyDataCharts();
+        }
         if (CHART_DATA_LOADING) return CHART_DATA_LOADING;
 
         var primary = chartDataUrl();
@@ -1126,10 +1142,13 @@ var App = (function () {
             .then(function (data) {
                 if (data && data.error) throw new Error(data.error);
                 CHART_DATA = data;
+                CHART_DATA_TIME = Date.now();
+                CHART_DATA_LOADING = null;
                 renderDataCharts();
                 return data;
             })
             .catch(function (error) {
+                CHART_DATA_LOADING = null;
                 var status = document.getElementById("dataChartStatus");
                 if (status) status.textContent = "图表数据加载失败：" + error.message;
                 throw error;
@@ -1144,9 +1163,11 @@ var App = (function () {
         DATA_CHARTS = {};
     }
 
-    function chartLineOptions(yLabel, y1Label, detail) {
+    function chartLineOptions(yLabel, y1Label, detail, xRange) {
+        var xConfig = { grid: { display: false }, ticks: { maxTicksLimit: detail ? 10 : 9, font: { size: 9 }, color: "#98A2B3", maxRotation: 0 } };
+        if (xRange) { xConfig.min = xRange.min; xConfig.max = xRange.max; }
         var scales = {
-            x: { grid: { display: false }, ticks: { maxTicksLimit: detail ? 10 : 9, font: { size: 9 }, color: "#98A2B3", maxRotation: 0 } },
+            x: xConfig,
             y: { position: "left", grid: { color: "rgba(148,163,184,.16)" }, border: { display: false }, ticks: { font: { size: 9 }, color: "#667085" }, title: { display: true, text: yLabel, color: "#667085", font: { size: 9, weight: "600" } } },
         };
         if (y1Label) {
@@ -1162,74 +1183,77 @@ var App = (function () {
             plugins: {
                 legend: { labels: { usePointStyle: true, pointStyle: "circle", padding: 12, color: "#344054", font: { size: 10, weight: "600" } } },
                 tooltip: { backgroundColor: "rgba(15,23,42,.92)", padding: 10, cornerRadius: 8, displayColors: true, titleFont: { size: 11 }, bodyFont: { size: 10 } },
+                zoom: {
+                    pan: { enabled: true, mode: "x" },
+                    zoom: { wheel: { enabled: false }, pinch: { enabled: true }, mode: "x" },
+                    limits: { x: { minRange: 10 } },
+                },
             },
         };
     }
 
-    function dataChartOptions(yLabel, y1Label) {
-        return chartLineOptions(yLabel, y1Label, false);
+    function dataChartOptions(yLabel, y1Label, xRange) {
+        return chartLineOptions(yLabel, y1Label, false, xRange);
     }
 
     function renderMarketChart(rows) {
-        var state = ensureChartRange("market", rows.length);
-        var visible = rows.slice(state.start, state.end + 1);
-        var labels = visible.map(function (row) { return row.date.slice(5); });
+        var winSize = Math.min(180, rows.length);
+        var xRange = { min: Math.max(0, rows.length - winSize), max: rows.length - 1 };
+        var labels = rows.map(function (row) { return row.date.slice(5); });
         var priceMap = {};
         var base = DATA["000001"];
         if (base && base.allDates) {
             base.allDates.forEach(function (date, index) { priceMap[date] = base.allCloses[index]; });
         }
-        var price = visible.map(function (row) { return priceMap[row.date] === undefined ? null : priceMap[row.date]; });
+        var price = rows.map(function (row) { return priceMap[row.date] === undefined ? null : priceMap[row.date]; });
         DATA_CHARTS.market = new Chart(document.getElementById("marketChart"), {
             data: {
                 labels: labels,
                 datasets: [
                     { type: "line", label: "上证指数", data: price, borderColor: "#007AFF", backgroundColor: "rgba(0,122,255,0.08)", yAxisID: "y", pointRadius: 0, borderWidth: 1.8, tension: 0.25 },
-                    { type: "line", label: "成交额 20 日均线", data: visible.map(function (row) { return row.amount_ma20; }), borderColor: "#FF9500", backgroundColor: "rgba(255,149,0,0.08)", yAxisID: "y1", pointRadius: 0, borderWidth: 2.2, tension: 0.25, fill: true },
+                    { type: "line", label: "成交额 20 日均线", data: rows.map(function (row) { return row.amount_ma20; }), borderColor: "#FF9500", backgroundColor: "rgba(255,149,0,0.08)", yAxisID: "y1", pointRadius: 0, borderWidth: 2.2, tension: 0.25, fill: true },
                 ],
             },
-            options: dataChartOptions("指数点位", "成交额（亿元）"),
+            options: dataChartOptions("指数点位", "成交额（亿元）", xRange),
         });
-        updateRangeLabel("market", rows.map(function (row) { return row.date; }), state);
     }
 
     function renderMarginChart(rows) {
-        var state = ensureChartRange("margin", rows.length);
-        var visible = rows.slice(state.start, state.end + 1);
-        var labels = visible.map(function (row) { return row.date.slice(5); });
+        var winSize = Math.min(180, rows.length);
+        var xRange = { min: Math.max(0, rows.length - winSize), max: rows.length - 1 };
+        var labels = rows.map(function (row) { return row.date.slice(5); });
         DATA_CHARTS.margin = new Chart(document.getElementById("marginChart"), {
             type: "line",
             data: { labels: labels, datasets: [
-                { label: "融资余额", data: visible.map(function (row) { return row.balance; }), borderColor: "#007AFF", backgroundColor: "rgba(0,122,255,.07)", fill: true, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.2, tension: 0.25 },
-                { label: "阶段峰值", data: visible.map(function (row) { return row.peak; }), borderColor: "#FF3B30", borderDash: [6, 5], pointRadius: 0, borderWidth: 1.6, tension: 0.15 },
-                { label: "当前回撤", data: visible.map(function (row) { return row.drawdown; }), borderColor: "#AF52DE", pointRadius: 0, pointHoverRadius: 4, borderWidth: 2, tension: 0.25, yAxisID: "y1" },
+                { label: "融资余额", data: rows.map(function (row) { return row.balance; }), borderColor: "#007AFF", backgroundColor: "rgba(0,122,255,.07)", fill: true, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.2, tension: 0.25 },
+                { label: "阶段峰值", data: rows.map(function (row) { return row.peak; }), borderColor: "#FF3B30", borderDash: [6, 5], pointRadius: 0, borderWidth: 1.6, tension: 0.15 },
+                { label: "当前回撤", data: rows.map(function (row) { return row.drawdown; }), borderColor: "#AF52DE", pointRadius: 0, pointHoverRadius: 4, borderWidth: 2, tension: 0.25, yAxisID: "y1" },
             ] },
-            options: dataChartOptions("融资余额（亿元）", "当前回撤（亿元）"),
+            options: dataChartOptions("融资余额（亿元）", "当前回撤（亿元）", xRange),
         });
-        updateRangeLabel("margin", rows.map(function (row) { return row.date; }), state);
     }
 
     function renderMarginFlowChart(rows) {
-        var flowState = ensureChartRange("marginFlow", rows.length);
-        var flowRows = rows.slice(flowState.start, flowState.end + 1);
+        var winSize = Math.min(180, rows.length);
+        var xRange = { min: Math.max(0, rows.length - winSize), max: rows.length - 1 };
         DATA_CHARTS.marginFlow = new Chart(document.getElementById("marginFlowChart"), {
             type: "line",
-            data: { labels: flowRows.map(function (row) { return row.date.slice(5); }), datasets: [
-                { label: "单日净买入", data: flowRows.map(function (row) { return row.net_buy; }), borderColor: "#34C759", backgroundColor: "rgba(52,199,89,.08)", fill: true, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2, tension: 0.2 },
-                { label: "融资余额", data: flowRows.map(function (row) { return row.balance; }), borderColor: "#007AFF", pointRadius: 0, pointHoverRadius: 4, borderWidth: 1.8, tension: 0.25, yAxisID: "y1" },
+            data: { labels: rows.map(function (row) { return row.date.slice(5); }), datasets: [
+                { label: "单日净买入", data: rows.map(function (row) { return row.net_buy; }), borderColor: "#34C759", backgroundColor: "rgba(52,199,89,.08)", fill: true, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2, tension: 0.2 },
+                { label: "融资余额", data: rows.map(function (row) { return row.balance; }), borderColor: "#007AFF", pointRadius: 0, pointHoverRadius: 4, borderWidth: 1.8, tension: 0.25, yAxisID: "y1" },
             ] },
-            options: dataChartOptions("单日净买入（亿元）", "融资余额（亿元）"),
+            options: dataChartOptions("单日净买入（亿元）", "融资余额（亿元）", xRange),
         });
-        updateRangeLabel("marginFlow", rows.map(function (row) { return row.date; }), flowState);
     }
 
     function renderEtfChart(etf) {
-        var state = ensureChartRange("etf", etf.rows.length);
-        var visible = etf.rows.slice(state.start, state.end + 1);
-        var labels = visible.map(function (row) { return row.date.slice(5); });
+        var rows = etf.rows || [];
+        var winSize = Math.min(180, rows.length);
+        var xRange = { min: Math.max(0, rows.length - winSize), max: rows.length - 1 };
+        var labels = rows.map(function (row) { return row.date.slice(5); });
         var datasets = [{
             label: "合计净流入",
-            data: visible.map(function (row) { return row.total; }),
+            data: rows.map(function (row) { return row.total; }),
             borderColor: "#1D1D1F",
             backgroundColor: "rgba(29,29,31,0.08)",
             borderWidth: 2.4,
@@ -1241,9 +1265,8 @@ var App = (function () {
         DATA_CHARTS.etf = new Chart(document.getElementById("etfChart"), {
             type: "line",
             data: { labels: labels, datasets: datasets },
-            options: dataChartOptions("净流入（亿元）"),
+            options: dataChartOptions("净流入（亿元）", null, xRange),
         });
-        updateRangeLabel("etf", etf.rows.map(function (row) { return row.date; }), state);
     }
 
     function renderDataCharts() {
@@ -1266,15 +1289,82 @@ var App = (function () {
         if (status) status.style.display = "none";
         var update = document.getElementById("dataUpdatedAt");
         if (update && CHART_DATA.market && CHART_DATA.market.length) {
-            update.textContent = "数据范围：" + CHART_DATA.market[0].date + " 至 " + CHART_DATA.market[CHART_DATA.market.length - 1].date;
+            var rangeText = "数据范围：" + CHART_DATA.market[0].date + " 至 " + CHART_DATA.market[CHART_DATA.market.length - 1].date;
+            if (CHART_DATA.updated_at) rangeText += " · 更新于 " + CHART_DATA.updated_at;
+            update.textContent = rangeText;
         }
+        renderMarginTable(CHART_DATA.margin || []);
     }
 
     function openDataPage() {
         var status = document.getElementById("dataChartStatus");
         if (status && !CHART_DATA) status.style.display = "block";
-        loadChartData().catch(function () {});
-        if (CHART_DATA) renderDataCharts();
+        loadChartData().then(function () {
+            renderDataCharts();
+        }).catch(function () {});
+    }
+
+    // ━━━ 融资余额每日净买入列表 ━━━
+    function renderMarginTable(rows) {
+        var container = document.getElementById("marginTableWrap");
+        if (!container) return;
+        if (!rows || !rows.length) { container.innerHTML = ""; return; }
+
+        var sorted = rows.slice().sort(function (a, b) {
+            var va = a[MARGIN_SORT_KEY], vb = b[MARGIN_SORT_KEY];
+            if (va === null || va === undefined) va = MARGIN_SORT_ASC ? Infinity : -Infinity;
+            if (vb === null || vb === undefined) vb = MARGIN_SORT_ASC ? Infinity : -Infinity;
+            if (va === vb) return 0;
+            return (va < vb ? -1 : 1) * (MARGIN_SORT_ASC ? 1 : -1);
+        });
+
+        var display = sorted.slice(0, 30);
+        var sortIcon = function (key) {
+            if (MARGIN_SORT_KEY !== key) return "";
+            return MARGIN_SORT_ASC ? " ▲" : " ▼";
+        };
+        var th = function (key, label) {
+            return '<th onclick="App.sortMarginTable(\'' + key + '\')" class="' +
+                (MARGIN_SORT_KEY === key ? "sort-active" : "") + '">' + label + sortIcon(key) + "</th>";
+        };
+
+        var html = '<table class="margin-table"><thead><tr>' +
+            th("date", "日期") + th("balance", "融资余额(亿)") + th("net_buy", "净买入(亿)") +
+            "</tr></thead><tbody>";
+        display.forEach(function (row) {
+            var cls = row.net_buy >= 0 ? "pos" : "neg";
+            var nb = row.net_buy !== null ? (row.net_buy >= 0 ? "+" : "") + row.net_buy.toFixed(2) : "—";
+            var bal = row.balance !== null ? row.balance.toFixed(2) : "—";
+            html += '<tr><td>' + row.date + '</td><td>' + bal + '</td><td class="' + cls + '">' + nb + '</td></tr>';
+        });
+        html += "</tbody></table>";
+        html += '<div style="text-align:center;font-size:10px;color:#AEAEB2;padding:6px 0">共 ' + rows.length + ' 条，显示前 30 条</div>';
+        container.innerHTML = html;
+    }
+
+    function sortMarginTable(key) {
+        if (MARGIN_SORT_KEY === key) {
+            MARGIN_SORT_ASC = !MARGIN_SORT_ASC;
+        } else {
+            MARGIN_SORT_KEY = key;
+            MARGIN_SORT_ASC = false;
+        }
+        renderMarginTable(CHART_DATA.margin || []);
+    }
+
+    function refreshChartData() {
+        showToast("正在刷新图表数据...");
+        loadChartData(true).then(function () {
+            renderDataCharts();
+            showToast("图表数据已更新");
+        }).catch(function () {
+            showToast("图表数据更新失败");
+        });
+    }
+
+    function resetChartZoom(key) {
+        var chart = DATA_CHARTS[key];
+        if (chart && chart.resetZoom) chart.resetZoom();
     }
 
     // ━━━ Tab 切换 ━━━
@@ -1759,5 +1849,8 @@ var App = (function () {
         onDateChange: onDateChange,
         clearDateFilter: clearDateFilter,
         sortYearTable: sortYearTable,
+        refreshChartData: refreshChartData,
+        sortMarginTable: sortMarginTable,
+        resetChartZoom: resetChartZoom,
     };
 })();

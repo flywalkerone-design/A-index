@@ -6,6 +6,8 @@
 <title>A股温度计</title>
 <script src="js/vendor/html2canvas.min.js"></script>
 <script src="js/vendor/chart.umd.min.js"></script>
+<script src="js/vendor/hammer.min.js"></script>
+<script src="js/vendor/chartjs-plugin-zoom.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden}
@@ -214,6 +216,22 @@ body{touch-action:pan-y;overscroll-behavior:none}
 .data-section h3,.d-section h3{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .chart-view-btn{flex:0 0 auto;width:28px;height:28px;border:0;border-radius:8px;background:#F2F4F7;color:#007AFF;font-size:17px;line-height:1;cursor:pointer}
 .chart-view-btn:active{background:#E8F4FD}
+.chart-reset-btn{flex:0 0 auto;width:28px;height:28px;border:0;border-radius:8px;background:#F2F4F7;color:#FF9500;font-size:16px;line-height:1;cursor:pointer}
+.chart-reset-btn:active{background:#FFF4E6}
+.data-page-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-6px 0 12px}
+.data-page-bar .data-intro{margin:0;flex:1;min-width:0}
+.data-refresh-btn{flex:0 0 auto;border:1px solid #D0D5DD;border-radius:8px;background:#fff;color:#007AFF;font-size:12px;font-weight:600;padding:5px 12px;cursor:pointer}
+.data-refresh-btn:active{background:#F0F7FF}
+.margin-table-wrap{margin-top:10px;max-height:360px;overflow-y:auto;-webkit-overflow-scrolling:touch;border-radius:8px;border:1px solid #EAECF0}
+.margin-table{width:100%;border-collapse:collapse;font-size:11px}
+.margin-table thead{position:sticky;top:0;z-index:1;background:#F7F8FA}
+.margin-table th{padding:8px 6px;text-align:right;color:#667085;font-weight:600;cursor:pointer;user-select:none;white-space:nowrap}
+.margin-table th:first-child{text-align:left}
+.margin-table th.sort-active{color:#007AFF}
+.margin-table td{padding:7px 6px;text-align:right;color:#344054;border-top:1px solid #F2F4F7;white-space:nowrap}
+.margin-table td:first-child{text-align:left;color:#1D1D1F;font-weight:500}
+.margin-table td.pos{color:#FF3B30}
+.margin-table td.neg{color:#34C759}
 .chart-landscape{position:fixed!important;z-index:250;inset:0!important;width:100vw!important;height:100vh!important;max-width:none!important;margin:0!important;border-radius:0!important;overflow:auto!important;padding:18px 20px calc(18px + env(safe-area-inset-bottom,0px))!important;background:#fff}
 .chart-landscape .data-chart,.chart-landscape .d-chart{height:calc(100vh - 150px)!important;min-height:280px}
 .chart-landscape .chart-range{margin-top:14px}
@@ -432,32 +450,32 @@ body{touch-action:pan-y;overscroll-behavior:none}
         <!-- ===== 数据Tab ===== -->
         <div class="page" id="pageData">
             <div class="page-title data-page-title">数据</div>
-            <div class="data-intro" id="dataUpdatedAt">正在加载图表数据...</div>
+            <div class="data-page-bar">
+                <div class="data-intro" id="dataUpdatedAt">正在加载图表数据...</div>
+                <button class="data-refresh-btn" onclick="App.refreshChartData()" title="刷新数据">🔄 刷新</button>
+            </div>
             <div id="dataChartStatus" class="data-status">正在加载图表数据...</div>
             <div id="dataCharts" style="display:none">
                 <section class="data-section" id="dataSection-market">
-                    <h3>上证指数与成交额 20 日均线<button class="chart-view-btn" onclick="App.toggleChartLandscape('market')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button></h3>
-                    <p>上证指数走势与成交额 20 日均线叠加观察。</p>
+                    <h3>上证指数与成交额 20 日均线<button class="chart-view-btn" onclick="App.toggleChartLandscape('market')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom('market')" title="重置缩放" aria-label="重置缩放">⟲</button></h3>
+                    <p>单指拖动平移，双指捏合缩放。上证指数走势与成交额 20 日均线叠加观察。</p>
                     <div class="data-chart"><canvas id="marketChart"></canvas></div>
-                    <div class="chart-range" id="range-market"></div>
                 </section>
                 <section class="data-section" id="dataSection-margin">
-                    <h3>融资余额与当前回撤<button class="chart-view-btn" onclick="App.toggleChartLandscape('margin')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button></h3>
+                    <h3>融资余额与当前回撤<button class="chart-view-btn" onclick="App.toggleChartLandscape('margin')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom('margin')" title="重置缩放" aria-label="重置缩放">⟲</button></h3>
                     <p>当前回撤 = 当日历史最大融资余额 - 当日融资余额，按 T+1 规则延续未发布日。</p>
                     <div class="data-chart"><canvas id="marginChart"></canvas></div>
-                    <div class="chart-range" id="range-margin"></div>
                 </section>
                 <section class="data-section" id="dataSection-marginFlow">
-                    <h3>融资余额与单日净买入<button class="chart-view-btn" onclick="App.toggleChartLandscape('marginFlow')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button></h3>
+                    <h3>融资余额与单日净买入<button class="chart-view-btn" onclick="App.toggleChartLandscape('marginFlow')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom('marginFlow')" title="重置缩放" aria-label="重置缩放">⟲</button></h3>
                     <p>单日净买入为正表示净买入，为负表示净卖出。</p>
                     <div class="data-chart"><canvas id="marginFlowChart"></canvas></div>
-                    <div class="chart-range" id="range-marginFlow"></div>
+                    <div id="marginTableWrap" class="margin-table-wrap"></div>
                 </section>
                 <section class="data-section" id="dataSection-etf">
-                    <h3>宽基 ETF 净流入<button class="chart-view-btn" onclick="App.toggleChartLandscape('etf')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button></h3>
+                    <h3>宽基 ETF 净流入<button class="chart-view-btn" onclick="App.toggleChartLandscape('etf')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom('etf')" title="重置缩放" aria-label="重置缩放">⟲</button></h3>
                     <p>展示宽基 ETF 净流入合计，单位为亿元。</p>
                     <div class="data-chart"><canvas id="etfChart"></canvas></div>
-                    <div class="chart-range" id="range-etf"></div>
                 </section>
             </div>
         </div>

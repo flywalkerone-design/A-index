@@ -20,6 +20,7 @@ app = Flask(__name__)
 
 # 数据缓存
 _cache = {"data": None, "time": 0}
+_chart_cache = {"data": None, "time": 0}
 
 
 @app.route("/")
@@ -66,8 +67,16 @@ def api_token_status():
 
 @app.route("/api/chart_data")
 def api_chart_data():
+    import time
+    now = time.time()
+    if _chart_cache["data"] and (now - _chart_cache["time"]) < 300:
+        return jsonify(_chart_cache["data"])
     try:
-        return jsonify(load_chart_data())
+        result = load_chart_data()
+        result["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        _chart_cache["data"] = result
+        _chart_cache["time"] = now
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
