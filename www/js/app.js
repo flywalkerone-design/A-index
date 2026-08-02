@@ -836,8 +836,8 @@ var App = (function () {
         if (d.ret !== null) html += '<div class="c ' + (d.ret >= 0 ? "up" : "dn") + '">' + (d.ret >= 0 ? "+" : "") + d.ret + '%</div>';
         html += '</div></div>';
 
-        // 走势图
-        html += '<div class="d-section" id="detailChartSection"><h3>市场温度 & ' + x.display + '走势<button class="chart-view-btn" onclick="App.toggleChartLandscape(\'detail\')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom(\'detail\')" title="重置缩放" aria-label="重置缩放">⟲</button></h3><div class="d-chart"><canvas id="detailChart"></canvas></div>' + rangeControlHtml("detail") + '<p style="font-size:11px;color:#86868B;margin-top:4px">双指拖动平移，双指捏合缩放。单指点击查看每日数值。</p></div>';
+        // 走势图（去掉滑轨，手势与数据Tab统一）
+        html += '<div class="d-section" id="detailChartSection"><h3>市场温度 & ' + x.display + '走势<button class="chart-view-btn" onclick="App.toggleChartLandscape(\'detail\')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom(\'detail\')" title="重置缩放" aria-label="重置缩放">⟲</button></h3><div class="d-chart"><canvas id="detailChart"></canvas></div><p style="font-size:11px;color:#86868B;margin-top:4px">单指查看每日数值，双指拖动平移、捏合缩放。</p></div>';
 
         // 近30个交易日温度日历（只显示交易日，无周末）
         html += '<div class="d-section"><h3>近30个交易日温度</h3>';
@@ -951,8 +951,7 @@ var App = (function () {
             ] },
             options: chartLineOptions("市场温度（℃）", x.display + "点位", true),
         });
-        setupTwoFingerPan(DETAIL_CHART, ctx);
-        updateRangeLabel("detail", base.allDates, state);
+        setupTwoFingerGestures(DETAIL_CHART, ctx);
     }
 
     function renderSingleDataChart(key) {
@@ -969,7 +968,7 @@ var App = (function () {
         if (key === "etf") renderEtfChart(CHART_DATA.etf || { rows: [] });
     }
 
-    // ━━━ 30个交易日温度日历（仅交易日，6列×5行）━━━
+    // ━━━ 30个交易日温度日历（仅交易日，5列×6行）━━━
     function renderCalendar(base) {
         var container = document.getElementById("calGrid");
         if (!container || !base.allDates) return;
@@ -1368,22 +1367,40 @@ var App = (function () {
         return chartLineOptions(yLabel, y1Label, false, xRange);
     }
 
-    // ━━━ 两指平移（替代单指 pan，避免与 tooltip 冲突）━━━
-    function setupTwoFingerPan(chart, canvas) {
+    // ━━━ 双指手势：pinch 缩放 + 2指平移（单指留给 tooltip）━━━
+    function setupTwoFingerGestures(chart, canvas) {
         if (!window.Hammer || !chart || !canvas) return;
         try {
             var mc = new Hammer.Manager(canvas, { touchAction: "none" });
-            mc.add(new Hammer.Pan({ event: "pan", pointers: 2, threshold: 3 }));
+            var pan = new Hammer.Pan({ event: "pan", pointers: 2, threshold: 5 });
+            var pinch = new Hammer.Pinch({ event: "pinch", threshold: 0.05 });
+            mc.add([pan, pinch]);
+            pinch.recognizeWith(pan);
+
             var lastX = 0;
-            mc.on("panstart", function () { lastX = 0; });
+            var isPinching = false;
+
+            mc.on("panstart", function () {
+                if (!isPinching) lastX = 0;
+            });
             mc.on("pan", function (e) {
+                if (isPinching) return;  // pinch 进行中，抑制 pan
                 var deltaX = e.deltaX - lastX;
                 lastX = e.deltaX;
                 if (deltaX !== 0 && chart.pan) {
-                    // 拖拽方向与数据方向一致：向右拖看更早数据
+                    // 向右拖看更早数据（方向取反与数据轴一致）
                     chart.pan({ x: -deltaX }, undefined, "x");
                 }
             });
+
+            mc.on("pinchstart", function () {
+                isPinching = true;
+            });
+            mc.on("pinchend", function () {
+                // 延迟恢复 pan，避免手指抬起瞬间误触发
+                setTimeout(function () { isPinching = false; }, 150);
+            });
+
             HAMMER_MANAGERS.push(mc);
         } catch (e) { /* Hammer not available */ }
     }
@@ -1413,7 +1430,7 @@ var App = (function () {
             },
             options: dataChartOptions("指数点位", "成交额（亿元）", xRange),
         });
-        setupTwoFingerPan(DATA_CHARTS.market, document.querySelector("#marketChart"));
+        setupTwoFingerGestures(DATA_CHARTS.market, document.querySelector("#marketChart"));
     }
 
     function renderMarginChart(rows) {
@@ -1429,7 +1446,7 @@ var App = (function () {
             ] },
             options: dataChartOptions("融资余额（亿元）", "当前回撤（亿元）", xRange),
         });
-        setupTwoFingerPan(DATA_CHARTS.margin, document.querySelector("#marginChart"));
+        setupTwoFingerGestures(DATA_CHARTS.margin, document.querySelector("#marginChart"));
     }
 
     function renderMarginFlowChart(rows) {
@@ -1443,7 +1460,7 @@ var App = (function () {
             ] },
             options: dataChartOptions("单日净买入（亿元）", "融资余额（亿元）", xRange),
         });
-        setupTwoFingerPan(DATA_CHARTS.marginFlow, document.querySelector("#marginFlowChart"));
+        setupTwoFingerGestures(DATA_CHARTS.marginFlow, document.querySelector("#marginFlowChart"));
     }
 
     function renderEtfChart(etf) {
@@ -1467,7 +1484,7 @@ var App = (function () {
             data: { labels: labels, datasets: datasets },
             options: dataChartOptions("净流入（亿元）", null, xRange),
         });
-        setupTwoFingerPan(DATA_CHARTS.etf, document.querySelector("#etfChart"));
+        setupTwoFingerGestures(DATA_CHARTS.etf, document.querySelector("#etfChart"));
     }
 
     function renderDataCharts() {
@@ -1861,9 +1878,9 @@ var App = (function () {
         var overlay = document.getElementById("downloadOverlay");
         if (overlay) overlay.classList.add("show");
 
-        // 创建临时海报 DOM
+        // 创建临时海报 DOM（3:4 竖长比例，与其他海报一致）
         var poster = document.createElement("div");
-        poster.style.cssText = "position:fixed;left:-9999px;top:0;width:420px;background:#FFF;border-radius:16px;display:flex;flex-direction:column;padding:24px 20px 20px;font-family:'PingFang SC','Microsoft YaHei',sans-serif;z-index:-1";
+        poster.style.cssText = "position:fixed;left:-9999px;top:0;width:420px;height:560px;background:#FFF;border-radius:16px;display:flex;flex-direction:column;padding:24px 20px 20px;font-family:'PingFang SC','Microsoft YaHei',sans-serif;z-index:-1;overflow:hidden";
         poster.id = "calPosterTemp";
 
         var ds = formatDateFullCN(base.allDates[base.allDates.length - 1]);
@@ -1877,7 +1894,7 @@ var App = (function () {
             '<div style="display:flex;justify-content:space-between;font-size:8px;color:#86868B;margin-bottom:6px">' +
             '<span>0</span><span>10</span><span>20</span><span>80</span><span>90</span><span>100</span></div>' +
             '<div style="font-size:11px;font-weight:600;color:#86868B;margin:8px 0 6px">近30个交易日</div>' +
-            '<div id="calPosterGrid" style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px"></div>' +
+            '<div id="calPosterGrid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;flex:1;align-content:space-between"></div>' +
             '<div style="text-align:center;margin-top:10px;font-size:10px;color:#86868B">今日市场情绪播报 | 投资有风险，入市需谨慎</div>' +
             '<div style="text-align:center;font-size:11px;color:#1D1D1F;font-weight:500">觉得有用欢迎点赞关注</div>';
 
@@ -1899,7 +1916,7 @@ var App = (function () {
                     var ec = score !== null ? tempColor(score) : "#E5E5EA";
                     var textClass = (ec === "#5AC8FA" || ec === "#34C759") ? "dt" : "lt";
                     var cell = document.createElement("div");
-                    cell.style.cssText = "border-radius:8px;padding:5px 3px;text-align:center;display:flex;flex-direction:column;justify-content:center;background:" + ec + ";color:" + (textClass === "dt" ? "#1D1D1F" : "#fff") + ";min-height:40px";
+                    cell.style.cssText = "border-radius:8px;padding:6px 3px;text-align:center;display:flex;flex-direction:column;justify-content:center;background:" + ec + ";color:" + (textClass === "dt" ? "#1D1D1F" : "#fff") + ";min-height:52px";
                     cell.innerHTML =
                         '<div style="font-size:9px;font-weight:500;line-height:1">' + monthLabel + '/' + dayLabel + '</div>' +
                         '<div style="font-size:12px;font-weight:700;line-height:1">' + (score !== null ? score : '-') + '</div>';
