@@ -477,6 +477,80 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * 通用 date_sequence 接口（同步）
+         * 支持多代码、多指标，用于数据 Tab 的 ETF 净流入等
+         * 返回 JSON: { tables: [{ thscode, time:[], table: { indicator: [vals] } }] } 或 { error: "..." }
+         */
+        @JavascriptInterface
+        public String fetchDateSequence(String codes, String indicator, String startDate, String endDate) {
+            try {
+                String token = ensureToken();
+                JSONObject para = new JSONObject();
+                para.put("codes", codes);
+                para.put("startdate", startDate.replace("-", ""));
+                para.put("enddate", endDate.replace("-", ""));
+                JSONObject fp = new JSONObject();
+                fp.put("Days", "Tradedays");
+                fp.put("Fill", "Previous");
+                para.put("functionpara", fp);
+                JSONArray indi = new JSONArray();
+                JSONObject indiObj = new JSONObject();
+                indiObj.put("indicator", indicator);
+                indiObj.put("indiparams", new JSONArray().put(""));
+                indi.put(indiObj);
+                para.put("indipara", indi);
+
+                String resp = httpPost(IFIND_BASE + "/date_sequence",
+                    para.toString(), token);
+                JSONObject json = new JSONObject(resp);
+
+                if (json.optInt("errorcode", -1) != 0) {
+                    return errorJson(json.optString("errmsg", "API error"));
+                }
+
+                // 返回精简结构: { tables: [{ thscode, time, table }] }
+                JSONArray tables = json.optJSONArray("tables");
+                if (tables == null) {
+                    return "{\"tables\":[]}";
+                }
+
+                JSONArray outTables = new JSONArray();
+                for (int i = 0; i < tables.length(); i++) {
+                    JSONObject item = tables.getJSONObject(i);
+                    JSONObject outItem = new JSONObject();
+                    outItem.put("thscode", item.optString("thscode", ""));
+
+                    JSONArray timeArr = item.optJSONArray("time");
+                    JSONArray outTimes = new JSONArray();
+                    if (timeArr != null) {
+                        for (int j = 0; j < timeArr.length(); j++) {
+                            String d = timeArr.getString(j);
+                            if (d.length() == 8 && !d.contains("-")) {
+                                d = d.substring(0, 4) + "-" + d.substring(4, 6) + "-" + d.substring(6);
+                            }
+                            outTimes.put(d);
+                        }
+                    }
+                    outItem.put("time", outTimes);
+                    outItem.put("table", item.optJSONObject("table"));
+                    outTables.put(outItem);
+                }
+
+                JSONObject result = new JSONObject();
+                result.put("tables", outTables);
+                return result.toString();
+
+            } catch (RuntimeException e) {
+                if (e.getMessage().equals("NO_TOKEN")) {
+                    return "{\"error\":\"NO_TOKEN\"}";
+                }
+                return errorJson(e.getMessage());
+            } catch (Exception e) {
+                return errorJson(e.getMessage());
+            }
+        }
+
+        /**
          * 测试 token 是否有效
          * 返回: { valid: true } 或 { valid: false, error: "..." }
          */

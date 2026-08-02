@@ -27,6 +27,7 @@ var App = (function () {
     var SELECTED_DATE = null;  // 日期回溯：选中的日期，null=最新
     var DATA_CACHE_KEY = "a_stock_data_snapshot_v5";
     var REFRESH_IN_PROGRESS = false;
+    var HAMMER_MANAGERS = [];  // chartjs-plugin-zoom 两指平移用的 Hammer 实例
 
     // ━━━ 配置管理 ━━━
     var SK = "a_stock_cfg_v6";
@@ -937,6 +938,7 @@ var App = (function () {
         var ctx = document.getElementById("detailChart");
         if (!ctx || !base || !base.allDates || !x) return;
         if (DETAIL_CHART) { DETAIL_CHART.destroy(); DETAIL_CHART = null; }
+        destroyHammerManagers();
         var state = ensureChartRange("detail", base.allDates.length);
         var dates = base.allDates.slice(state.start, state.end + 1);
         var scores = base.allScores.slice(state.start, state.end + 1);
@@ -949,6 +951,7 @@ var App = (function () {
             ] },
             options: chartLineOptions("市场温度（℃）", x.display + "点位", true),
         });
+        setupTwoFingerPan(DETAIL_CHART, ctx);
         updateRangeLabel("detail", base.allDates, state);
     }
 
@@ -1120,6 +1123,162 @@ var App = (function () {
         });
     }
 
+    // ━━━ 从 iFinD API 直接获取图表数据（Android 端实时获取）━━━
+    var ETF_IFIND_CODES = ["510300.OF", "510050.OF", "588000.OF", "512100.OF",
+        "159915.OF", "510310.OF", "510500.OF", "510330.OF",
+        "588080.OF", "159919.OF", "159845.OF"];
+    var MARGIN_API_CODES = ["000001.SH", "399107.SZ"];
+
+    function fetchChartDataFromAPI() {
+        var IS_ANDROID = !!(window.Android && window.Android.isAndroid && window.Android.isAndroid());
+        if (!IS_ANDROID) return Promise.reject(new Error("not android"));
+
+        var startDate = new Date();
+        startDate.setDate(startDate.getDate() - 365 * 2 - 30);
+        var start = formatDate(startDate);
+        var end = formatDate(new Date());
+
+        return Promise.all([
+            fetchMarketChartAPI(start, end),
+            fetchMarginChartAPI(start, end),
+            fetchEtfChartAPI(start, end),
+        ]).then(function (results) {
+            return {
+                market: results[0],
+                margin: results[1],
+                etf: results[2],
+                updated_at: new Date().toLocaleString("zh-CN"),
+            };
+        });
+    }
+
+    function fetchMarketChartAPI(start, end) {
+        // 复用已有的 Fetch.fetchIndexHistory 获取上证指数行情
+        return Fetch.fetchIndexHistory("000001.SH", start, end).then(function (data) {
+            if (!data || data.error || !data.dates || !data.dates.length) return [];
+            var rows = [];
+            var amounts = data.amount || [];
+            for (var i = 0; i < data.dates.length; i++) {
+                var amt = amounts[i];
+                var window = [];
+                for (var j = Math.max(0, i - 19); j <= i; j++) {
+                    if (amounts[j] !== null && amounts[j] !== undefined && !isNaN(amounts[j])) window.push(amounts[j]);
+                }
+                var ma20 = window.length ? window.reduce(function (a, b) { return a + b; }, 0) / window.length : null;
+                rows.push({
+                    date: data.dates[i],
+                    amount: amt !== null && amt !== undefined ? Math.round(amt * 100) / 100 : null,
+                    amount_ma20: ma20 !== null ? Math.round(ma20 * 100) / 100 : null,
+                });
+            }
+            return rows;
+        });
+    }
+
+    function fetchMarginChartAPI(start, end) {
+        // 分别获取 SH 和 SZ 融资余额，再汇总
+        var promises = MARGIN_API_CODES.map(function (code) {
+            return Fetch.fetchMargin(code, start, end).then(function (data) {
+                if (!data || data.error || !data.dates) return {};
+                var map = {};
+                for (var i = 0; i < data.dates.length; i++) {
+                    var v = data.margin_balance ? data.margin_balance[i] : null;
+                    map[data.dates[i]] = v !== null && v !== undefined && !isNaN(v) ? v / 1e8 : null;
+                }
+                return map;
+            }).catch(function () { return {}; });
+        });
+
+        return Promise.all(promises).then(function (maps) {
+            var shMap = maps[0] || {};
+            var szMap = maps[1] || {};
+            var dateSet = {};
+            Object.keys(shMap).forEach(function (d) { dateSet[d] = true; });
+            Object.keys(szMap).forEach(function (d) { dateSet[d] = true; });
+            var sortedDates = Object.keys(dateSet).sort();
+
+            var rows = [];
+            var prevBalance = null;
+            var peak = null;
+            var latestIdx = sortedDates.length - 1;
+
+            for (var i = 0; i < sortedDates.length; i++) {
+                var d = sortedDates[i];
+                var sh = shMap[d];
+                var sz = szMap[d];
+                var parts = [];
+                if (sh !== null && sh !== undefined) parts.push(sh);
+                if (sz !== null && sz !== undefined) parts.push(sz);
+                var total = parts.length ? parts.reduce(function (a, b) { return a + b; }, 0) : null;
+
+                // T+1 调整
+                var isMissing = total === null || total <= 0;
+                var isLatestJump = (i === latestIdx && prevBalance !== null && total !== null && total < prevBalance * 0.8);
+                var adjusted = false;
+                if (isMissing || isLatestJump) {
+                    total = prevBalance;
+                    adjusted = true;
+                }
+
+                if (total !== null) {
+                    peak = peak !== null ? Math.max(peak, total) : total;
+                }
+                var drawdown = (peak !== null && total !== null) ? Math.max(0, peak - total) : 0;
+                var netBuy = 0;
+                if (adjusted && prevBalance !== null) {
+                    netBuy = 0;
+                } else if (total !== null && prevBalance !== null) {
+                    netBuy = Math.round((total - prevBalance) * 100) / 100;
+                }
+
+                rows.push({
+                    date: d,
+                    balance: total !== null ? Math.round(total * 100) / 100 : null,
+                    peak: peak !== null ? Math.round(peak * 100) / 100 : null,
+                    drawdown: Math.round(drawdown * 100) / 100,
+                    net_buy: netBuy,
+                    t_plus_one_adjusted: adjusted,
+                });
+
+                if (total !== null) prevBalance = total;
+            }
+            return rows;
+        });
+    }
+
+    function fetchEtfChartAPI(start, end) {
+        var codes = ETF_IFIND_CODES.join(",");
+        return new Promise(function (resolve) {
+            try {
+                var raw = window.Android.fetchDateSequence(codes, "ths_netcashflow_fund", start, end);
+                var resp = JSON.parse(raw);
+                if (resp.error || !resp.tables || !resp.tables.length) {
+                    resolve({ rows: [] });
+                    return;
+                }
+                var daily = {};
+                for (var t = 0; t < resp.tables.length; t++) {
+                    var table = resp.tables[t];
+                    var times = table.time || [];
+                    var vals = (table.table || {})[ "ths_netcashflow_fund"] || [];
+                    for (var i = 0; i < times.length; i++) {
+                        var v = vals[i];
+                        if (v !== null && v !== undefined && !isNaN(v)) {
+                            var yi = v / 1e8;
+                            daily[times[i]] = (daily[times[i]] || 0) + yi;
+                        }
+                    }
+                }
+                var rows = Object.keys(daily).sort().map(function (d) {
+                    return { date: d, total: Math.round(daily[d] * 100) / 100 };
+                });
+                resolve({ rows: rows });
+            } catch (e) {
+                resolve({ rows: [] });
+            }
+        });
+    }
+
     function loadChartData(force) {
         var now = Date.now();
         if (!force && CHART_DATA && (now - CHART_DATA_TIME) < CHART_DATA_TTL) {
@@ -1131,14 +1290,26 @@ var App = (function () {
         }
         if (CHART_DATA_LOADING) return CHART_DATA_LOADING;
 
-        var primary = chartDataUrl();
-        var fallback = "data/chart_data.json";
+        var IS_ANDROID = !!(window.Android && window.Android.isAndroid && window.Android.isAndroid());
 
-        CHART_DATA_LOADING = loadChartText(primary)
-            .then(function (text) { return JSON.parse(text); })
-            .catch(function () {
-                return loadChartText(fallback).then(function (text) { return JSON.parse(text); });
-            })
+        // Android 端优先从 iFinD API 实时获取，失败则回退静态 JSON
+        var dataPromise;
+        if (IS_ANDROID && window.Android.fetchDateSequence) {
+            dataPromise = fetchChartDataFromAPI().catch(function (apiErr) {
+                console.warn("API 获取图表数据失败，回退静态 JSON:", apiErr);
+                return loadChartText("data/chart_data.json").then(function (text) { return JSON.parse(text); });
+            });
+        } else {
+            var primary = chartDataUrl();
+            var fallback = "data/chart_data.json";
+            dataPromise = loadChartText(primary)
+                .then(function (text) { return JSON.parse(text); })
+                .catch(function () {
+                    return loadChartText(fallback).then(function (text) { return JSON.parse(text); });
+                });
+        }
+
+        CHART_DATA_LOADING = dataPromise
             .then(function (data) {
                 if (data && data.error) throw new Error(data.error);
                 CHART_DATA = data;
@@ -1157,6 +1328,7 @@ var App = (function () {
     }
 
     function destroyDataCharts() {
+        destroyHammerManagers();
         Object.keys(DATA_CHARTS).forEach(function (key) {
             if (DATA_CHARTS[key]) DATA_CHARTS[key].destroy();
         });
@@ -1184,7 +1356,7 @@ var App = (function () {
                 legend: { labels: { usePointStyle: true, pointStyle: "circle", padding: 12, color: "#344054", font: { size: 10, weight: "600" } } },
                 tooltip: { backgroundColor: "rgba(15,23,42,.92)", padding: 10, cornerRadius: 8, displayColors: true, titleFont: { size: 11 }, bodyFont: { size: 10 } },
                 zoom: {
-                    pan: { enabled: true, mode: "x" },
+                    pan: { enabled: false },
                     zoom: { wheel: { enabled: false }, pinch: { enabled: true }, mode: "x" },
                     limits: { x: { minRange: 10 } },
                 },
@@ -1194,6 +1366,31 @@ var App = (function () {
 
     function dataChartOptions(yLabel, y1Label, xRange) {
         return chartLineOptions(yLabel, y1Label, false, xRange);
+    }
+
+    // ━━━ 两指平移（替代单指 pan，避免与 tooltip 冲突）━━━
+    function setupTwoFingerPan(chart, canvas) {
+        if (!window.Hammer || !chart || !canvas) return;
+        try {
+            var mc = new Hammer.Manager(canvas, { touchAction: "none" });
+            mc.add(new Hammer.Pan({ event: "pan", pointers: 2, threshold: 3 }));
+            var lastX = 0;
+            mc.on("panstart", function () { lastX = 0; });
+            mc.on("pan", function (e) {
+                var deltaX = e.deltaX - lastX;
+                lastX = e.deltaX;
+                if (deltaX !== 0 && chart.pan) {
+                    // 拖拽方向与数据方向一致：向右拖看更早数据
+                    chart.pan({ x: -deltaX }, undefined, "x");
+                }
+            });
+            HAMMER_MANAGERS.push(mc);
+        } catch (e) { /* Hammer not available */ }
+    }
+
+    function destroyHammerManagers() {
+        HAMMER_MANAGERS.forEach(function (mc) { try { mc.destroy(); } catch (e) {} });
+        HAMMER_MANAGERS = [];
     }
 
     function renderMarketChart(rows) {
@@ -1216,6 +1413,7 @@ var App = (function () {
             },
             options: dataChartOptions("指数点位", "成交额（亿元）", xRange),
         });
+        setupTwoFingerPan(DATA_CHARTS.market, document.querySelector("#marketChart"));
     }
 
     function renderMarginChart(rows) {
@@ -1231,6 +1429,7 @@ var App = (function () {
             ] },
             options: dataChartOptions("融资余额（亿元）", "当前回撤（亿元）", xRange),
         });
+        setupTwoFingerPan(DATA_CHARTS.margin, document.querySelector("#marginChart"));
     }
 
     function renderMarginFlowChart(rows) {
@@ -1244,6 +1443,7 @@ var App = (function () {
             ] },
             options: dataChartOptions("单日净买入（亿元）", "融资余额（亿元）", xRange),
         });
+        setupTwoFingerPan(DATA_CHARTS.marginFlow, document.querySelector("#marginFlowChart"));
     }
 
     function renderEtfChart(etf) {
@@ -1267,6 +1467,7 @@ var App = (function () {
             data: { labels: labels, datasets: datasets },
             options: dataChartOptions("净流入（亿元）", null, xRange),
         });
+        setupTwoFingerPan(DATA_CHARTS.etf, document.querySelector("#etfChart"));
     }
 
     function renderDataCharts() {
@@ -1662,7 +1863,7 @@ var App = (function () {
 
         // 创建临时海报 DOM
         var poster = document.createElement("div");
-        poster.style.cssText = "position:fixed;left:-9999px;top:0;width:420px;min-height:560px;background:#FFF;border-radius:16px;display:flex;flex-direction:column;padding:24px 20px 20px;font-family:'PingFang SC','Microsoft YaHei',sans-serif;z-index:-1";
+        poster.style.cssText = "position:fixed;left:-9999px;top:0;width:420px;background:#FFF;border-radius:16px;display:flex;flex-direction:column;padding:24px 20px 20px;font-family:'PingFang SC','Microsoft YaHei',sans-serif;z-index:-1";
         poster.id = "calPosterTemp";
 
         var ds = formatDateFullCN(base.allDates[base.allDates.length - 1]);
@@ -1676,7 +1877,7 @@ var App = (function () {
             '<div style="display:flex;justify-content:space-between;font-size:8px;color:#86868B;margin-bottom:6px">' +
             '<span>0</span><span>10</span><span>20</span><span>80</span><span>90</span><span>100</span></div>' +
             '<div style="font-size:11px;font-weight:600;color:#86868B;margin:8px 0 6px">近30个交易日</div>' +
-            '<div id="calPosterGrid" style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px;flex:1"></div>' +
+            '<div id="calPosterGrid" style="display:grid;grid-template-columns:repeat(6,1fr);gap:4px"></div>' +
             '<div style="text-align:center;margin-top:10px;font-size:10px;color:#86868B">今日市场情绪播报 | 投资有风险，入市需谨慎</div>' +
             '<div style="text-align:center;font-size:11px;color:#1D1D1F;font-weight:500">觉得有用欢迎点赞关注</div>';
 
@@ -1698,10 +1899,10 @@ var App = (function () {
                     var ec = score !== null ? tempColor(score) : "#E5E5EA";
                     var textClass = (ec === "#5AC8FA" || ec === "#34C759") ? "dt" : "lt";
                     var cell = document.createElement("div");
-                    cell.style.cssText = "border-radius:6px;padding:4px 2px;text-align:center;display:flex;flex-direction:column;justify-content:center;background:" + ec + ";color:" + (textClass === "dt" ? "#1D1D1F" : "#fff") + ";min-height:33px";
+                    cell.style.cssText = "border-radius:8px;padding:5px 3px;text-align:center;display:flex;flex-direction:column;justify-content:center;background:" + ec + ";color:" + (textClass === "dt" ? "#1D1D1F" : "#fff") + ";min-height:40px";
                     cell.innerHTML =
-                        '<div style="font-size:8px;font-weight:500;line-height:1">' + monthLabel + '/' + dayLabel + '</div>' +
-                        '<div style="font-size:11px;font-weight:700;line-height:1">' + (score !== null ? score : '-') + '</div>';
+                        '<div style="font-size:9px;font-weight:500;line-height:1">' + monthLabel + '/' + dayLabel + '</div>' +
+                        '<div style="font-size:12px;font-weight:700;line-height:1">' + (score !== null ? score : '-') + '</div>';
                     grid.appendChild(cell);
                 }
             }

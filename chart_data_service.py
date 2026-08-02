@@ -62,22 +62,26 @@ def _date_sequence_chunk(codes, indicator, start, end, extra_params=None):
 
 
 def _fetch_margin_ifind_direct(start, end):
-    """直接调 date_sequence 获取融资余额（使用 API 返回的日期，避免对齐错误）"""
+    """获取融资余额 + 融资买入额 + 融资偿还额（一次请求多指标）"""
     from datetime import datetime as dt
 
     all_rows = []
     chunk_start = dt.strptime(start, "%Y-%m-%d")
     chunk_end = dt.strptime(end, "%Y-%m-%d")
 
+    # 同时请求三个指标：余额、买入额、偿还额
+    indicators = [
+        {"indicator": "ths_margin_trading_balance_index", "indiparams": [""]},
+        {"indicator": "ths_margin_buy_value_index", "indiparams": [""]},
+        {"indicator": "ths_margin_repayment_value_index", "indiparams": [""]},
+    ]
+
     for code in MARGIN_CODES:
         code_rows = []
         cs = chunk_start
         while cs <= chunk_end:
             ce = min(cs + timedelta(days=550), chunk_end)
-            rows = _date_sequence_chunk(
-                code, "ths_margin_trading_balance_index",
-                cs.strftime("%Y-%m-%d"), ce.strftime("%Y-%m-%d"),
-            )
+            rows = _date_sequence_multi_indicator(code, indicators, cs.strftime("%Y-%m-%d"), ce.strftime("%Y-%m-%d"))
             if not rows:
                 break
             code_rows.extend(rows)
@@ -90,9 +94,44 @@ def _fetch_margin_ifind_direct(start, end):
         for r in code_rows:
             if r["date"] not in seen:
                 seen.add(r["date"])
-                all_rows.append({"date": r["date"], "code": code, "value": r["value"]})
+                all_rows.append(r)
 
     return all_rows
+
+
+def _date_sequence_multi_indicator(code, indicators, start, end):
+    """调用 date_sequence API，一次请求多个指标"""
+    para = {
+        "codes": code,
+        "startdate": start.replace("-", ""),
+        "enddate": end.replace("-", ""),
+        "functionpara": {"Days": "Tradedays", "Fill": "Previous"},
+        "indipara": indicators,
+    }
+
+    resp = _session.post(
+        "https://quantapi.51ifind.com/api/v1/date_sequence",
+        json=para, headers=_headers(), timeout=60,
+    )
+    r = resp.json()
+    if r.get("errorcode") != 0:
+        log.warning(f"date_sequence error: {r.get('errmsg')} (code={code})")
+        return []
+
+    result = []
+    for table in r.get("tables", []):
+        thscode = table.get("thscode", "")
+        times = table.get("time", [])
+        tbl = table.get("table", {})
+        for i, t in enumerate(times):
+            date_str = str(t)[:10]
+            row = {"date": date_str, "code": thscode}
+            for ind in indicators:
+                key = ind["indicator"]
+                vals = tbl.get(key, [])
+                row[key] = vals[i] if i < len(vals) else None
+            result.append(row)
+    return result
 
 
 def _fetch_market_from_ifind(start, end):
@@ -118,32 +157,50 @@ def _fetch_market_from_ifind(start, end):
 
 
 def _fetch_margin_from_ifind(start, end):
-    """沪深两市融资余额合计（SH + SZ 求和）+ 峰值/回撤/净买入"""
+    """沪深两市融资余额合计 + 峰值/回撤/净买入
+
+    净买入优先使用 iFinD 直接指标（融资买入额 - 融资偿还额），
+    若指标不可用则回退到余额差值法。
+    """
     raw = _fetch_margin_ifind_direct(start, end)
     if not raw:
         return []
+
+    # 检查是否有买入额/偿还额数据
+    has_buy_data = any(r.get("ths_margin_buy_value_index") is not None for r in raw)
 
     # 按日期聚合：SH + SZ 求和
     daily = {}
     for r in raw:
         d = r["date"]
-        v = r["value"]
         if d not in daily:
-            daily[d] = {"sh": None, "sz": None}
+            daily[d] = {"sh_bal": None, "sz_bal": None, "sh_buy": None, "sz_buy": None, "sh_rep": None, "sz_rep": None}
         if r["code"] == "000001.SH":
-            daily[d]["sh"] = float(v) if v is not None else None
+            daily[d]["sh_bal"] = float(r["ths_margin_trading_balance_index"]) if r.get("ths_margin_trading_balance_index") is not None else None
+            daily[d]["sh_buy"] = float(r["ths_margin_buy_value_index"]) if r.get("ths_margin_buy_value_index") is not None else None
+            daily[d]["sh_rep"] = float(r["ths_margin_repayment_value_index"]) if r.get("ths_margin_repayment_value_index") is not None else None
         elif r["code"] == "399107.SZ":
-            daily[d]["sz"] = float(v) if v is not None else None
+            daily[d]["sz_bal"] = float(r["ths_margin_trading_balance_index"]) if r.get("ths_margin_trading_balance_index") is not None else None
+            daily[d]["sz_buy"] = float(r["ths_margin_buy_value_index"]) if r.get("ths_margin_buy_value_index") is not None else None
+            daily[d]["sz_rep"] = float(r["ths_margin_repayment_value_index"]) if r.get("ths_margin_repayment_value_index") is not None else None
 
     # 排序
     sorted_dates = sorted(daily.keys())
     rows = []
     for d in sorted_dates:
-        sh = daily[d]["sh"]
-        sz = daily[d]["sz"]
-        parts = [v for v in [sh, sz] if v is not None]
-        total = sum(parts) / 1e8 if parts else None  # 元 -> 亿元
-        rows.append({"date": d, "balance": total})
+        item = daily[d]
+        parts_bal = [v for v in [item["sh_bal"], item["sz_bal"]] if v is not None]
+        total = sum(parts_bal) / 1e8 if parts_bal else None  # 元 -> 亿元
+
+        # 净买入：优先用买入额-偿还额
+        net_buy = None
+        if has_buy_data:
+            buy_parts = [v for v in [item["sh_buy"], item["sz_buy"]] if v is not None]
+            rep_parts = [v for v in [item["sh_rep"], item["sz_rep"]] if v is not None]
+            if buy_parts and rep_parts:
+                net_buy = round((sum(buy_parts) - sum(rep_parts)) / 1e8, 2)
+
+        rows.append({"date": d, "balance": total, "_direct_net_buy": net_buy})
 
     # T+1 调整：最新交易日余额可能未发布或异常跳变
     prev_balance = None
@@ -175,12 +232,18 @@ def _fetch_margin_from_ifind(start, end):
         item["peak"] = peak
         item["drawdown"] = max(0.0, peak - b) if (peak is not None and b is not None) else 0.0
 
+        # 净买入：优先用直接指标，回退到余额差值
         if item.get("t_plus_one_adjusted") and prev_balance is not None:
             item["net_buy"] = 0.0
+        elif item["_direct_net_buy"] is not None:
+            item["net_buy"] = item["_direct_net_buy"]
         elif b is not None and prev_balance is not None:
             item["net_buy"] = round(b - prev_balance, 2)
         else:
             item["net_buy"] = 0.0
+
+        # 清理临时字段
+        del item["_direct_net_buy"]
 
         if b is not None:
             prev_balance = b
