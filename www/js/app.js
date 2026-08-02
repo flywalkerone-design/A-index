@@ -837,7 +837,7 @@ var App = (function () {
         html += '</div></div>';
 
         // 走势图
-        html += '<div class="d-section" id="detailChartSection"><h3>市场温度 & ' + x.display + '走势<button class="chart-view-btn" onclick="App.toggleChartLandscape(\'detail\')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button></h3><div class="d-chart"><canvas id="detailChart"></canvas></div>' + rangeControlHtml("detail") + '</div>';
+        html += '<div class="d-section" id="detailChartSection"><h3>市场温度 & ' + x.display + '走势<button class="chart-view-btn" onclick="App.toggleChartLandscape(\'detail\')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom(\'detail\')" title="重置缩放" aria-label="重置缩放">⟲</button></h3><div class="d-chart"><canvas id="detailChart"></canvas></div>' + rangeControlHtml("detail") + '<p style="font-size:11px;color:#86868B;margin-top:4px">双指拖动平移，双指捏合缩放。单指点击查看每日数值。</p></div>';
 
         // 近30个交易日温度日历（只显示交易日，无周末）
         html += '<div class="d-section"><h3>近30个交易日温度</h3>';
@@ -1564,7 +1564,7 @@ var App = (function () {
     }
 
     function resetChartZoom(key) {
-        var chart = DATA_CHARTS[key];
+        var chart = key === "detail" ? DETAIL_CHART : DATA_CHARTS[key];
         if (chart && chart.resetZoom) chart.resetZoom();
     }
 
