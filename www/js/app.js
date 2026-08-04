@@ -1613,39 +1613,28 @@ var App = (function () {
         document.getElementById("settingsOverlay").classList.remove("show");
     }
 
-    function renderSettings() {
+    function openCustomIndex() {
+        document.getElementById("customIndexOverlay").classList.add("show");
+        renderCustomIndexPanel();
+    }
+
+    function closeCustomIndex(e) {
+        if (e && e.target !== document.getElementById("customIndexOverlay")) return;
+        document.getElementById("customIndexOverlay").classList.remove("show");
+    }
+
+    function renderCustomIndexPanel() {
         var groups = [
             { k: "main", l: "主要指数" },
             { k: "light", l: "站在光里" },
             { k: "sector", l: "主题行业" },
             { k: "smartbeta", l: "SmartBeta" },
         ];
-        var allIndexes = AppConfig.getAllIndexes();
         var customList = AppConfig.getCustomIndexes();
         var html = "";
-        groups.forEach(function (g) {
-            var items = allIndexes.filter(function (x) { return x.group === g.k; });
-            var allOn = items.every(function (x) { return cfg.en.indexOf(x.code) >= 0; });
-            html += '<div class="s-group"><div class="s-group-title"><span>' + g.l + ' (' +
-                items.filter(function (x) { return cfg.en.indexOf(x.code) >= 0; }).length + '/' + items.length +
-                ')</span><button onclick="App.toggleGrp(\'' + g.k + '\')">' +
-                (allOn ? "取消全选" : "全选") + '</button></div><div class="s-items">';
-            items.forEach(function (x) {
-                var on = cfg.en.indexOf(x.code) >= 0;
-                var isCustom = customList.some(function (c) { return c.code === x.code; });
-                html += '<div class="s-item ' + (on ? "on" : "") + '" onclick="App.toggleIdx(\'' + x.code + '\')">' +
-                    '<div class="ck">' + (on ? "✓" : "") + '</div><span>' + x.display + (isCustom ? ' <em style="font-style:normal;color:#FF9500;font-size:10px">' + x.ifind + '</em>' : '') + '</span></div>';
-            });
-            html += "</div></div>";
-        });
-
-        // 自定义指数管理
-        html += '<div class="s-group" style="margin-top:16px;padding-top:16px;border-top:1px solid #E5E5EA">';
-        html += '<div class="s-group-title"><span>➕ 自定义指数</span></div>';
-        html += '<div style="font-size:10px;color:#86868B;margin-bottom:8px">新增自定义指数后自动获取数据并同步到所有Tab</div>';
 
         // 新增表单
-        html += '<div style="background:#F5F5F7;border-radius:10px;padding:12px;margin-bottom:10px">';
+        html += '<div style="background:#F5F5F7;border-radius:10px;padding:12px;margin-bottom:12px">';
         html += '<div style="display:flex;gap:8px;margin-bottom:6px">';
         html += '<input type="text" id="customName" placeholder="指数名称（如：中证新能）" style="flex:1;padding:7px 10px;border-radius:8px;border:1px solid #E5E5EA;font-size:12px;outline:none">';
         html += '<input type="text" id="customDisplay" placeholder="显示名（如：新能源）" style="flex:1;padding:7px 10px;border-radius:8px;border:1px solid #E5E5EA;font-size:12px;outline:none">';
@@ -1665,20 +1654,54 @@ var App = (function () {
         html += '</div>';
 
         // 已有自定义指数列表
+        html += '<div class="s-group"><div class="s-group-title"><span>已添加的自定义指数 (' + customList.length + ')</span></div>';
         if (customList.length > 0) {
             html += '<div class="s-items">';
             customList.forEach(function (x) {
-                var on = cfg.en.indexOf(x.code) >= 0;
-                html += '<div class="s-item ' + (on ? "on" : "") + '" style="position:relative;padding-right:26px" onclick="App.toggleIdx(\'' + x.code + '\')">' +
-                    '<div class="ck">' + (on ? "✓" : "") + '</div><span>' + x.display + ' <em style="font-style:normal;color:#86868B;font-size:10px">' + x.ifind + '</em></span>' +
+                var gLabel = "";
+                var g = groups.find(function (gg) { return gg.k === x.group; });
+                if (g) gLabel = g.l;
+                html += '<div class="s-item on" style="position:relative;padding-right:26px">' +
+                    '<div class="ck">✓</div><span>' + x.display + ' <em style="font-style:normal;color:#86868B;font-size:10px">' + x.ifind + '</em> <em style="font-style:normal;color:#007AFF;font-size:10px">' + gLabel + '</em></span>' +
                     '<button onclick="event.stopPropagation();App.removeCustomIndex(\'' + x.code + '\')" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:20px;height:20px;border:none;border-radius:50%;background:#FF3B30;color:#fff;font-size:12px;cursor:pointer;line-height:1;padding:0">✕</button>' +
                     '</div>';
             });
             html += "</div>";
         } else {
-            html += '<div style="font-size:11px;color:#AEAEB2;text-align:center;padding:8px">暂无自定义指数</div>';
+            html += '<div style="font-size:11px;color:#AEAEB2;text-align:center;padding:12px">暂无自定义指数<br>填写上方表单添加</div>';
         }
         html += "</div>";
+
+        document.getElementById("customIndexBody").innerHTML = html;
+    }
+
+    function renderSettings() {
+        var groups = [
+            { k: "main", l: "主要指数" },
+            { k: "light", l: "站在光里" },
+            { k: "sector", l: "主题行业" },
+            { k: "smartbeta", l: "SmartBeta" },
+        ];
+        var allIndexes = AppConfig.getAllIndexes();
+        var html = "";
+        groups.forEach(function (g) {
+            var items = allIndexes.filter(function (x) { return x.group === g.k; });
+            var allOn = items.every(function (x) { return cfg.en.indexOf(x.code) >= 0; });
+            html += '<div class="s-group"><div class="s-group-title"><span>' + g.l + ' (' +
+                items.filter(function (x) { return cfg.en.indexOf(x.code) >= 0; }).length + '/' + items.length +
+                ')</span><button onclick="App.toggleGrp(\'' + g.k + '\')">' +
+                (allOn ? "取消全选" : "全选") + '</button></div><div class="s-items">';
+            items.forEach(function (x) {
+                var on = cfg.en.indexOf(x.code) >= 0;
+                var isCustom = x.custom === true;
+                html += '<div class="s-item ' + (on ? "on" : "") + '" onclick="App.toggleIdx(\'' + x.code + '\')">' +
+                    '<div class="ck">' + (on ? "✓" : "") + '</div><span>' + x.display + (isCustom ? ' <em style="font-style:normal;color:#FF9500;font-size:10px">' + x.ifind + '</em>' : '') + '</span></div>';
+            });
+            html += "</div></div>";
+        });
+
+        // 自定义指数管理已移至全部Tab右上角"+"按钮
+        // 此处只保留指数显隐开关（控制海报是否包含）
 
         // 极端板块海报 — 按实际检测结果分组显示
         // 计算全部指数的极端情况（不受extremeEn限制）
@@ -1779,7 +1802,7 @@ var App = (function () {
         localStorage.setItem(SK, JSON.stringify(cfg));
 
         showToast("✅ 已添加 " + display + "，正在获取数据...");
-        renderSettings();
+        renderCustomIndexPanel();
 
         // 后台获取该指数数据
         var startDate = new Date();
@@ -1822,7 +1845,7 @@ var App = (function () {
         saveDataSnapshot();
 
         showToast("已删除 " + display);
-        renderSettings();
+        renderCustomIndexPanel();
         renderAll();
     }
 
@@ -2205,5 +2228,7 @@ var App = (function () {
         resetChartZoom: resetChartZoom,
         addCustomIndex: addCustomIndex,
         removeCustomIndex: removeCustomIndex,
+        openCustomIndex: openCustomIndex,
+        closeCustomIndex: closeCustomIndex,
     };
 })();

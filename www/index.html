@@ -431,7 +431,10 @@ body{touch-action:pan-y;overscroll-behavior:none}
 
         <!-- ===== 全部指数Tab ===== -->
         <div class="page" id="pageAll">
-            <div class="page-title">全部指数</div>
+            <div style="position:relative">
+                <div class="page-title">全部指数</div>
+                <button class="settings-btn" onclick="App.openCustomIndex()" title="管理自定义指数">➕</button>
+            </div>
             <div class="margin-notice margin-notice--all" id="allMarginNotice" style="display:none"></div>
             <div class="section-title">主要指数</div>
             <div class="idx-cards" id="allMain"></div>
@@ -496,12 +499,23 @@ body{touch-action:pan-y;overscroll-behavior:none}
     <div class="settings-overlay" id="settingsOverlay" onclick="App.closeSettings(event)">
         <div class="settings-sheet" onclick="event.stopPropagation()">
             <button class="s-close" onclick="App.closeSettings()">✕</button>
-            <h3>自定义指数</h3>
+            <h3>指数管理</h3>
+            <div style="font-size:11px;color:#86868B;margin:-4px 0 10px">勾选指数以在海报中显示</div>
             <div id="settingsBody"></div>
             <div class="s-actions">
                 <button class="s-save" onclick="App.saveCfg()">💾 保存</button>
                 <button class="s-reset" onclick="App.resetCfg()">🔄 默认</button>
             </div>
+        </div>
+    </div>
+
+    <!-- 自定义指数管理面板 -->
+    <div class="settings-overlay" id="customIndexOverlay" onclick="App.closeCustomIndex(event)">
+        <div class="settings-sheet" onclick="event.stopPropagation()">
+            <button class="s-close" onclick="App.closeCustomIndex()">✕</button>
+            <h3>➕ 自定义指数</h3>
+            <div style="font-size:11px;color:#86868B;margin:-4px 0 10px">新增后自动获取数据，并出现在对应分组中</div>
+            <div id="customIndexBody"></div>
         </div>
     </div>
 
@@ -523,11 +537,11 @@ body{touch-action:pan-y;overscroll-behavior:none}
 <!-- end phone-wrapper -->
 
 <!-- 加载 JS 模块 -->
-<script src="js/config.js?v=20260804-1"></script>
-<script src="js/indicators.js?v=20260804-1"></script>
-<script src="js/scoring.js?v=20260804-1"></script>
-<script src="js/fetch.js?v=20260804-1"></script>
-<script src="js/app.js?v=20260804-1"></script>
+<script src="js/config.js?v=20260804-2"></script>
+<script src="js/indicators.js?v=20260804-2"></script>
+<script src="js/scoring.js?v=20260804-2"></script>
+<script src="js/fetch.js?v=20260804-2"></script>
+<script src="js/app.js?v=20260804-2"></script>
 
 <script>
 // 初始化
