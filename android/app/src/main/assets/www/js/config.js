@@ -75,16 +75,36 @@ var AppConfig = (function () {
         percentrank_rsi_window: 365,
     };
 
+    // ━━━ 自定义指数（localStorage 持久化）━━━
+    var CUSTOM_SK = "a_stock_custom_indexes_v1";
+
+    function getCustomIndexes() {
+        try {
+            var s = localStorage.getItem(CUSTOM_SK);
+            if (s) return JSON.parse(s);
+        } catch (e) { /* ignore */ }
+        return [];
+    }
+
+    function saveCustomIndexes(arr) {
+        try { localStorage.setItem(CUSTOM_SK, JSON.stringify(arr)); } catch (e) { /* ignore */ }
+    }
+
+    function getAllIndexes() {
+        return INDEXES.concat(getCustomIndexes());
+    }
+
     // ━━━ 辅助函数 ━━━
     function getIndexByCode(code) {
-        for (var i = 0; i < INDEXES.length; i++) {
-            if (INDEXES[i].code === code) return INDEXES[i];
+        var all = getAllIndexes();
+        for (var i = 0; i < all.length; i++) {
+            if (all[i].code === code) return all[i];
         }
         return null;
     }
 
     function getIndexesByGroup(group) {
-        return INDEXES.filter(function (idx) { return idx.group === group; });
+        return getAllIndexes().filter(function (idx) { return idx.group === group; });
     }
 
     function getMarketState(score) {
@@ -114,6 +134,10 @@ var AppConfig = (function () {
     return {
         PROXY_BASE: PROXY_BASE,
         INDEXES: INDEXES,
+        CUSTOM_SK: CUSTOM_SK,
+        getCustomIndexes: getCustomIndexes,
+        saveCustomIndexes: saveCustomIndexes,
+        getAllIndexes: getAllIndexes,
         RSI_PERIOD: RSI_PERIOD,
         PERCENTRANK_WINDOW: PERCENTRANK_WINDOW,
         LOW_FREQ_WINDOW: LOW_FREQ_WINDOW,
