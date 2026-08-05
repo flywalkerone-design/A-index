@@ -1598,6 +1598,7 @@ var App = (function () {
         var tabs = document.querySelectorAll(".btab");
         var idx = { home: 0, all: 1, data: 2 };
         if (tabs[idx[name]]) tabs[idx[name]].classList.add("active");
+        if (name === "home") renderAll();
         if (name === "data") openDataPage();
     }
 
@@ -1759,7 +1760,9 @@ var App = (function () {
     function toggleIdx(c) {
         var i = cfg.en.indexOf(c);
         if (i >= 0) cfg.en.splice(i, 1); else cfg.en.push(c);
+        localStorage.setItem(SK, JSON.stringify(cfg));
         renderSettings();
+        renderAll();
     }
 
     function addCustomIndex() {
@@ -1857,14 +1860,18 @@ var App = (function () {
         } else {
             codes.forEach(function (c) { if (cfg.en.indexOf(c) < 0) cfg.en.push(c); });
         }
+        localStorage.setItem(SK, JSON.stringify(cfg));
         renderSettings();
+        renderAll();
     }
 
     function toggleExtremeIdx(c) {
         if (!cfg.extremeEn) cfg.extremeEn = AppConfig.getAllIndexes().map(function (x) { return x.code; });
         var i = cfg.extremeEn.indexOf(c);
         if (i >= 0) cfg.extremeEn.splice(i, 1); else cfg.extremeEn.push(c);
+        localStorage.setItem(SK, JSON.stringify(cfg));
         renderSettings();
+        renderAll();
     }
 
     function saveCfg() {

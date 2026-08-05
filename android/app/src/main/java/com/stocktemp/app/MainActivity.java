@@ -291,7 +291,7 @@ public class MainActivity extends AppCompatActivity {
                 String token = ensureToken();
                 JSONObject para = new JSONObject();
                 para.put("codes", ifindCode);
-                para.put("indicators", "preClose,open,high,low,close,changeRatio,volume,amount,pe_ttm_index");
+                para.put("indicators", "preClose,open,high,low,close,changeRatio,volume,amount,turnover_ratio,pe_ttm_index");
                 para.put("startdate", startDate.replace("-", ""));
                 para.put("enddate", endDate.replace("-", ""));
                 JSONObject fp = new JSONObject();
@@ -335,8 +335,8 @@ public class MainActivity extends AppCompatActivity {
                 result.put("dates", dates);
 
                 // 数据列
-                String[] cols = {"close", "volume", "amount", "pe_ttm_index"};
-                String[] outCols = {"close", "volume", "amount", "pe"};
+                String[] cols = {"close", "volume", "amount", "turnover_ratio", "pe_ttm_index"};
+                String[] outCols = {"close", "volume", "amount", "turnover_ratio", "pe"};
                 for (int c = 0; c < cols.length; c++) {
                     JSONArray vals = table.optJSONArray(cols[c]);
                     if (vals != null) {
@@ -482,7 +482,7 @@ public class MainActivity extends AppCompatActivity {
          * 返回 JSON: { tables: [{ thscode, time:[], table: { indicator: [vals] } }] } 或 { error: "..." }
          */
         @JavascriptInterface
-        public String fetchDateSequence(String codes, String indicator, String startDate, String endDate) {
+        public String fetchDateSequence(String codes, String indicator, String startDate, String endDate, String indiparamsJson) {
             try {
                 String token = ensureToken();
                 JSONObject para = new JSONObject();
@@ -496,7 +496,14 @@ public class MainActivity extends AppCompatActivity {
                 JSONArray indi = new JSONArray();
                 JSONObject indiObj = new JSONObject();
                 indiObj.put("indicator", indicator);
-                indiObj.put("indiparams", new JSONArray().put(""));
+                // 支持 indiparams 参数（如 RSI 的 ["6","100"]），默认为 [""]
+                JSONArray params;
+                if (indiparamsJson != null && !indiparamsJson.isEmpty()) {
+                    params = new JSONArray(indiparamsJson);
+                } else {
+                    params = new JSONArray().put("");
+                }
+                indiObj.put("indiparams", params);
                 indi.put(indiObj);
                 para.put("indipara", indi);
 

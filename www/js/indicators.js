@@ -184,7 +184,7 @@ var Indicators = (function () {
     // 5. 计算全部百分位排名
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     /**
-     * @param {Object} data - { close, amount, pe, RSI, margin_balance }
+     * @param {Object} data - { close, turnover_ratio, pe, RSI, margin_balance }
      * @param {boolean} useMargin - 是否计算融资余额百分位
      * @returns {Object} { rank_close, rank_turnover, rank_pe, rank_rsi, rank_margin }
      */
@@ -193,7 +193,7 @@ var Indicators = (function () {
 
         var ranks = {};
         ranks.rank_close = percentrankInc(data.close, window);
-        ranks.rank_turnover = percentrankInc(data.amount, window);
+        ranks.rank_turnover = percentrankInc(data.turnover_ratio, window);
 
         // PE 百分位
         if (data.pe && countValid(data.pe) >= 2) {
@@ -230,7 +230,7 @@ var Indicators = (function () {
     /**
      * 完整指标计算流程，与 Python calc_all_indicators 一致
      *
-     * @param {Object} raw - 原始数据 { dates, close, volume, amount, pe, margin_balance }
+     * @param {Object} raw - 原始数据 { dates, close, volume, amount, turnover_ratio, pe, margin_balance, rsi_ifind }
      * @param {boolean} useMargin - 是否使用融资余额
      * @returns {Object} 增量添加了 MA, daily_return, RSI, rank_* 的数据对象
      */
@@ -243,6 +243,7 @@ var Indicators = (function () {
         data.close = raw.close.slice();
         data.volume = raw.volume ? raw.volume.slice() : null;
         data.amount = raw.amount ? raw.amount.slice() : null;
+        data.turnover_ratio = raw.turnover_ratio ? raw.turnover_ratio.slice() : null;
         data.pe = raw.pe ? raw.pe.slice() : null;
         data.margin_balance = raw.margin_balance ? raw.margin_balance.slice() : null;
 
@@ -255,8 +256,12 @@ var Indicators = (function () {
         // 2. 日涨跌幅
         data.daily_return = calcDailyReturn(data.close);
 
-        // 3. RSI
-        data.RSI = calcRSI(data.close, AppConfig.RSI_PERIOD);
+        // 3. RSI — 优先使用 iFinD RSI (ths_rsi_index)，不支持时降级到本地 Wilder RSI
+        if (raw.rsi_ifind && countValid(raw.rsi_ifind) >= 2) {
+            data.RSI = raw.rsi_ifind.slice();
+        } else {
+            data.RSI = calcRSI(data.close, AppConfig.RSI_PERIOD);
+        }
 
         // 4. 百分位排名
         var ranks = calcAllPercentileRanks(data, useMargin);

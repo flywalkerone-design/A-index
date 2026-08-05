@@ -7,11 +7,11 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.stocktemp.app2"
+        applicationId = "com.stocktemp.app3"
         minSdk = 24
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.6.0"
+        versionCode = 7
+        versionName = "1.7.0"
     }
 
     signingConfigs {

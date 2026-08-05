@@ -140,15 +140,15 @@ var Scoring = (function () {
         var indicators = useMargin
             ? {
                 rank_close: { name: "收盘价百分位", weight: 0.2 },
-                rank_turnover: { name: "成交额百分位", weight: 0.2 },
-                rank_pe: { name: "PE百分位", weight: 0.2 },
+                rank_turnover: { name: "换手率百分位", weight: 0.2 },
+                rank_pe: { name: "PE TTM百分位", weight: 0.2 },
                 rank_rsi: { name: "RSI百分位", weight: 0.2 },
                 rank_margin: { name: "融资余额百分位", weight: 0.2 },
             }
             : {
                 rank_close: { name: "收盘价百分位", weight: 0.25 },
-                rank_turnover: { name: "成交额百分位", weight: 0.25 },
-                rank_pe: { name: "PE百分位", weight: 0.25 },
+                rank_turnover: { name: "换手率百分位", weight: 0.25 },
+                rank_pe: { name: "PE TTM百分位", weight: 0.25 },
                 rank_rsi: { name: "RSI百分位", weight: 0.25 },
             };
 

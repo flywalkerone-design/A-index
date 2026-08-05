@@ -111,12 +111,12 @@ var Fetch = (function () {
      */
     function fetchIndexHistory(ifindCode, startDate, endDate) {
         // 检查缓存
-        var ck = cacheKey("hist", ifindCode, startDate, endDate);
+        var ck = cacheKey("hist2", ifindCode, startDate, endDate);
         var cached = getCached(ck);
         if (cached && cached.dates && cached.dates.length > 0) {
             return Promise.resolve(cached);
         }
-        var previous = findCached("hist", ifindCode, startDate);
+        var previous = findCached("hist2", ifindCode, startDate);
         if (previous && previous.dates[previous.dates.length - 1] >= endDate) return Promise.resolve(previous);
         var requestStart = previous && previous.dates.length
             ? addDays(previous.dates[previous.dates.length - 1], 1) : startDate;
@@ -208,7 +208,66 @@ var Fetch = (function () {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 3. Token 管理
+    // 3. RSI 指标（iFinD date_sequence）
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    /**
+     * 获取 RSI 指标（ths_rsi_index, 参数 [6, 100]）
+     * @param {string} ifindCode
+     * @param {string} startDate
+     * @param {string} endDate
+     * @returns {Promise<Object>} { dates, rsi } 或 { dates: [], rsi: [] }
+     */
+    function fetchRSI(ifindCode, startDate, endDate) {
+        if (IS_ANDROID) {
+            return new Promise(function (resolve) {
+                try {
+                    var raw = Android.fetchDateSequence(
+                        ifindCode, "ths_rsi_index", startDate, endDate,
+                        JSON.stringify(["6", "100"])
+                    );
+                    var data = JSON.parse(raw);
+                    if (data.error) {
+                        resolve({ dates: [], rsi: [] });
+                        return;
+                    }
+                    var tables = data.tables || [];
+                    if (tables.length === 0 || !tables[0].table) {
+                        resolve({ dates: [], rsi: [] });
+                        return;
+                    }
+                    var tbl = tables[0].table;
+                    var rsiVals = tbl["ths_rsi_index"] || [];
+                    var dates = tables[0].time || [];
+
+                    // 检查是否有有效值
+                    var hasValid = false;
+                    var parsed = rsiVals.map(function (v) {
+                        if (v === null || v === "null" || (typeof v === "number" && isNaN(v))) return null;
+                        hasValid = true;
+                        return v;
+                    });
+
+                    if (!hasValid) {
+                        resolve({ dates: [], rsi: [] });
+                        return;
+                    }
+
+                    resolve({ dates: dates, rsi: parsed });
+                } catch (e) {
+                    resolve({ dates: [], rsi: [] });
+                }
+            });
+        } else {
+            return fetch(AppConfig.PROXY_BASE + "/api/proxy/rsi", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code: ifindCode, start: startDate, end: endDate }),
+            }).then(function (r) { return r.json(); });
+        }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 4. Token 管理
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     function checkToken() {
         if (IS_ANDROID) {
@@ -276,26 +335,43 @@ var Fetch = (function () {
                         close: historyData.close || [],
                         volume: historyData.volume || [],
                         amount: historyData.amount || [],
+                        turnover_ratio: historyData.turnover_ratio || [],
                         pe: historyData.pe || [],
                         margin_balance: null,
+                        rsi_ifind: null,
                     };
 
+                    // 并行拉取融资余额和RSI
+                    var promises = [];
+
                     if (idxConfig.margin) {
-                        fetchMargin(idxConfig.ifind, startDate, endDate)
-                            .then(function (marginData) {
-                                if (marginData && !marginData.error && marginData.dates && marginData.margin_balance) {
-                                    result.margin_balance = alignMarginData(
-                                        result.dates, marginData.dates, marginData.margin_balance
-                                    );
-                                }
-                                resolve(result);
-                            })
-                            .catch(function () {
-                                resolve(result);
-                            });
-                    } else {
-                        resolve(result);
+                        promises.push(
+                            fetchMargin(idxConfig.ifind, startDate, endDate)
+                                .then(function (marginData) {
+                                    if (marginData && !marginData.error && marginData.dates && marginData.margin_balance) {
+                                        result.margin_balance = alignMarginData(
+                                            result.dates, marginData.dates, marginData.margin_balance
+                                        );
+                                    }
+                                })
+                                .catch(function () { /* ignore */ })
+                        );
                     }
+
+                    // 总是尝试拉取 iFinD RSI
+                    promises.push(
+                        fetchRSI(idxConfig.ifind, startDate, endDate)
+                            .then(function (rsiData) {
+                                if (rsiData && !rsiData.error && rsiData.dates && rsiData.rsi && rsiData.dates.length > 0) {
+                                    result.rsi_ifind = alignRSIData(result.dates, rsiData.dates, rsiData.rsi);
+                                }
+                            })
+                            .catch(function () { /* ignore */ })
+                    );
+
+                    Promise.all(promises).then(function () {
+                        resolve(result);
+                    });
                 })
                 .catch(function (err) {
                     reject(err);
@@ -319,6 +395,21 @@ var Fetch = (function () {
         return aligned;
     }
 
+    function alignRSIData(tradeDates, rsiDates, rsiValues) {
+        var rsiMap = {};
+        for (var i = 0; i < rsiDates.length; i++) {
+            rsiMap[rsiDates[i]] = rsiValues[i];
+        }
+        var aligned = new Array(tradeDates.length).fill(null);
+        for (var i = 0; i < tradeDates.length; i++) {
+            var v = rsiMap[tradeDates[i]];
+            if (v !== undefined && v !== null && !isNaN(v)) {
+                aligned[i] = v;
+            }
+        }
+        return aligned;
+    }
+
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 5. 完整流水线：获取 + 计算
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -335,12 +426,11 @@ var Fetch = (function () {
                 if (!raw) return null;
 
                 // 融资余额未更新时，截止到最近一个有效融资交易日之后一天。
+                // 如果勾了 margin 但 iFinD 没返回融资数据，降级为无融资模式
                 var filtered = raw;
                 var useMargin = idxConfig.margin && filtered.margin_balance &&
                     countNotNull(filtered.margin_balance) >= 1;
-                if (idxConfig.margin) {
-                    if (!useMargin) return null;
-
+                if (useMargin) {
                     var lastMarginIdx = -1;
                     for (var i = filtered.margin_balance.length - 1; i >= 0; i--) {
                         if (filtered.margin_balance[i] !== null && !isNaN(filtered.margin_balance[i])) {
@@ -348,8 +438,12 @@ var Fetch = (function () {
                             break;
                         }
                     }
-                    if (lastMarginIdx < 0) return null;
-                    filtered = filterByDate(raw, addDays(filtered.dates[lastMarginIdx], 1));
+                    if (lastMarginIdx < 0) {
+                        useMargin = false;
+                        filtered = filterByDate(raw, formatDate(new Date()));
+                    } else {
+                        filtered = filterByDate(raw, addDays(filtered.dates[lastMarginIdx], 1));
+                    }
                 } else {
                     filtered = filterByDate(raw, formatDate(new Date()));
                 }
@@ -391,9 +485,12 @@ var Fetch = (function () {
         result.close = indices.map(function (i) { return data.close[i]; });
         result.volume = data.volume ? indices.map(function (i) { return data.volume[i]; }) : null;
         result.amount = data.amount ? indices.map(function (i) { return data.amount[i]; }) : null;
+        result.turnover_ratio = data.turnover_ratio ? indices.map(function (i) { return data.turnover_ratio[i]; }) : null;
         result.pe = data.pe ? indices.map(function (i) { return data.pe[i]; }) : null;
         result.margin_balance = data.margin_balance
             ? indices.map(function (i) { return data.margin_balance[i]; }) : null;
+        result.rsi_ifind = data.rsi_ifind
+            ? indices.map(function (i) { return data.rsi_ifind[i]; }) : null;
         return result;
     }
 
@@ -439,6 +536,7 @@ var Fetch = (function () {
         updateToken: updateToken,
         fetchIndexHistory: fetchIndexHistory,
         fetchMargin: fetchMargin,
+        fetchRSI: fetchRSI,
         fetchRawData: fetchRawData,
         fetchAndCalculate: fetchAndCalculate,
     };

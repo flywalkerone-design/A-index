@@ -36,7 +36,7 @@ def _json_number(value):
 
 from data_service import check_token, fetch_all_data, update_token
 from chart_data_service import load_chart_data
-from utils.ifind_data import fetch_index_history_ifind, fetch_margin_ifind
+from utils.ifind_data import fetch_index_history_ifind, fetch_margin_ifind, fetch_rsi_ifind
 from config import INDEXES
 
 
@@ -164,10 +164,11 @@ def proxy_index_history():
             "close": [_json_number(value) for value in df["close"]],
             "volume": [_json_number(value) for value in df["volume"]],
             "amount": [_json_number(value) for value in df["amount"]],
+            "turnover_ratio": [_json_number(value) for value in df["turnover_ratio"]] if "turnover_ratio" in df.columns else [],
             "pe": [_json_number(value) for value in df["pe"]],
         })
     except Exception as e:
-        return jsonify({"error": str(e), "dates": [], "close": [], "volume": [], "amount": [], "pe": []}), 500
+        return jsonify({"error": str(e), "dates": [], "close": [], "volume": [], "amount": [], "turnover_ratio": [], "pe": []}), 500
 
 
 @app.route("/api/proxy/margin", methods=["POST"])
@@ -190,6 +191,28 @@ def proxy_margin():
         })
     except Exception as e:
         return jsonify({"error": str(e), "dates": [], "margin_balance": []}), 500
+
+
+@app.route("/api/proxy/rsi", methods=["POST"])
+def proxy_rsi():
+    body = request.get_json(silent=True) or {}
+    code = body.get("code")
+    start = body.get("start", "")
+    end = body.get("end", "")
+    if not code:
+        return jsonify({"error": "missing code", "dates": [], "rsi": []}), 400
+
+    try:
+        df = fetch_rsi_ifind(code, start, end)
+        if df is None or df.empty:
+            return jsonify({"dates": [], "rsi": []})
+
+        return jsonify({
+            "dates": [d.strftime("%Y-%m-%d") for d in df["date"]],
+            "rsi": [None if v != v else float(v) for v in df["rsi"]],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "dates": [], "rsi": []}), 500
 
 
 @app.route("/api/cache/status")

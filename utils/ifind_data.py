@@ -245,7 +245,7 @@ def _fetch_history_chunk(code: str, startdate: str, enddate: str) -> pd.DataFram
     """单次请求 iFinD 历史行情。"""
     para = {
         "codes": code,
-        "indicators": "preClose,open,high,low,close,changeRatio,volume,amount,pe_ttm_index",
+        "indicators": "preClose,open,high,low,close,changeRatio,volume,amount,turnover_ratio,pe_ttm_index",
         "startdate": startdate.replace("-", ""),
         "enddate": enddate.replace("-", ""),
         "functionpara": {
@@ -348,7 +348,7 @@ def fetch_index_history_ifind(code: str, startdate: str, enddate: str) -> pd.Dat
             part = part.drop_duplicates(subset="date", keep="last").sort_values("date").reset_index(drop=True)
             # 格式转换（新数据，缓存数据已在上次保存时转换过）
             part = part.rename(columns={"changeRatio": "change_pct", "pe_ttm_index": "pe"})
-            for col in ["open", "high", "low", "close", "change_pct", "volume", "amount", "pe"]:
+            for col in ["open", "high", "low", "close", "change_pct", "volume", "amount", "turnover_ratio", "pe"]:
                 if col in part.columns:
                     part[col] = pd.to_numeric(part[col], errors="coerce")
             if "amount" in part.columns:
@@ -377,7 +377,7 @@ def fetch_index_history_ifind(code: str, startdate: str, enddate: str) -> pd.Dat
     if "stock_count" not in df.columns:
         df["stock_count"] = None
     keep_cols = ["date", "open", "high", "low", "close", "change_pct",
-                 "volume", "amount", "stock_count", "pe"]
+                 "volume", "amount", "turnover_ratio", "stock_count", "pe"]
     df = df[[c for c in keep_cols if c in df.columns]]
 
     # ━━━ 6. 保存到磁盘缓存 ━━━
@@ -394,6 +394,76 @@ def fetch_index_history_ifind(code: str, startdate: str, enddate: str) -> pd.Dat
         log.info(f"  最新PE: {df['pe'].iloc[-1]:.2f}")
 
     return df
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 4. RSI 指标（date_sequence 接口）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def fetch_rsi_ifind(code: str, startdate: str, enddate: str) -> pd.DataFrame:
+    """
+    通过 iFinD date_sequence 获取 RSI 指标。
+    使用 ths_rsi_index，参数 [6, 100]（周期=6, 计算周期=100）。
+
+    返回:
+        DataFrame: date, rsi
+        如果指数不支持该指标，返回空 DataFrame。
+    """
+    para = {
+        "codes": code,
+        "startdate": startdate.replace("-", ""),
+        "enddate": enddate.replace("-", ""),
+        "functionpara": {"Days": "Tradedays", "Fill": "Previous"},
+        "indipara": [{
+            "indicator": "ths_rsi_index",
+            "indiparams": ["6", "100"],
+        }],
+    }
+    try:
+        resp = _session.post(
+            "https://quantapi.51ifind.com/api/v1/date_sequence",
+            json=para,
+            headers=_headers(),
+            timeout=30,
+        )
+        r = resp.json()
+        if r.get("errorcode") != 0:
+            log.warning(f"iFinD RSI 获取失败 {code}: errorcode={r.get('errorcode')}")
+            return pd.DataFrame(columns=["date", "rsi"])
+
+        tables = r.get("tables", [])
+        if not tables:
+            return pd.DataFrame(columns=["date", "rsi"])
+
+        item = tables[0]
+        times = item.get("time", [])
+        vals = item.get("table", {}).get("ths_rsi_index", [])
+        if not times or not vals:
+            return pd.DataFrame(columns=["date", "rsi"])
+
+        # 检查是否有有效值（非 None、非 "null" 字符串）
+        parsed = []
+        for v in vals:
+            if v is None or v == "null" or (isinstance(v, str) and v.strip() == ""):
+                parsed.append(float("nan"))
+            else:
+                try:
+                    parsed.append(float(v))
+                except (TypeError, ValueError):
+                    parsed.append(float("nan"))
+
+        has_valid = any(not pd.isna(v) for v in parsed)
+        if not has_valid:
+            log.info(f"iFinD RSI 对 {code} 无有效数据（可能不支持该指标）")
+            return pd.DataFrame(columns=["date", "rsi"])
+
+        df = pd.DataFrame({
+            "date": pd.to_datetime(times),
+            "rsi": parsed,
+        })
+        return df
+    except Exception as e:
+        log.warning(f"iFinD RSI 获取异常 {code}: {e}")
+        return pd.DataFrame(columns=["date", "rsi"])
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
