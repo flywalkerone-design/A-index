@@ -111,12 +111,12 @@ var Fetch = (function () {
      */
     function fetchIndexHistory(ifindCode, startDate, endDate) {
         // 检查缓存
-        var ck = cacheKey("hist2", ifindCode, startDate, endDate);
+        var ck = cacheKey("hist3", ifindCode, startDate, endDate);
         var cached = getCached(ck);
         if (cached && cached.dates && cached.dates.length > 0) {
             return Promise.resolve(cached);
         }
-        var previous = findCached("hist2", ifindCode, startDate);
+        var previous = findCached("hist3", ifindCode, startDate);
         if (previous && previous.dates[previous.dates.length - 1] >= endDate) return Promise.resolve(previous);
         var requestStart = previous && previous.dates.length
             ? addDays(previous.dates[previous.dates.length - 1], 1) : startDate;
@@ -208,7 +208,64 @@ var Fetch = (function () {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 3. RSI 指标（iFinD date_sequence）
+    // 3a. 换手率（iFinD date_sequence: ths_turnover_ratio_index）
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    /**
+     * 获取换手率指标
+     * @param {string} ifindCode
+     * @param {string} startDate
+     * @param {string} endDate
+     * @returns {Promise<Object>} { dates, turnover_ratio } 或 { dates: [], turnover_ratio: [] }
+     */
+    function fetchTurnoverRatio(ifindCode, startDate, endDate) {
+        if (IS_ANDROID) {
+            return new Promise(function (resolve) {
+                try {
+                    var raw = Android.fetchDateSequence(
+                        ifindCode, "ths_turnover_ratio_index", startDate, endDate, null
+                    );
+                    var data = JSON.parse(raw);
+                    if (data.error) {
+                        resolve({ dates: [], turnover_ratio: [] });
+                        return;
+                    }
+                    var tables = data.tables || [];
+                    if (tables.length === 0 || !tables[0].table) {
+                        resolve({ dates: [], turnover_ratio: [] });
+                        return;
+                    }
+                    var tbl = tables[0].table;
+                    var vals = tbl["ths_turnover_ratio_index"] || [];
+                    var dates = tables[0].time || [];
+
+                    var hasValid = false;
+                    var parsed = vals.map(function (v) {
+                        if (v === null || v === "null" || (typeof v === "number" && isNaN(v))) return null;
+                        hasValid = true;
+                        return v;
+                    });
+
+                    if (!hasValid) {
+                        resolve({ dates: [], turnover_ratio: [] });
+                        return;
+                    }
+
+                    resolve({ dates: dates, turnover_ratio: parsed });
+                } catch (e) {
+                    resolve({ dates: [], turnover_ratio: [] });
+                }
+            });
+        } else {
+            return fetch(AppConfig.PROXY_BASE + "/api/proxy/turnover", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code: ifindCode, start: startDate, end: endDate }),
+            }).then(function (r) { return r.json(); });
+        }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 3b. RSI 指标（iFinD date_sequence）
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     /**
      * 获取 RSI 指标（ths_rsi_index, 参数 [6, 100]）
@@ -335,14 +392,27 @@ var Fetch = (function () {
                         close: historyData.close || [],
                         volume: historyData.volume || [],
                         amount: historyData.amount || [],
-                        turnover_ratio: historyData.turnover_ratio || [],
+                        turnover_ratio: null,
                         pe: historyData.pe || [],
                         margin_balance: null,
                         rsi_ifind: null,
                     };
 
-                    // 并行拉取融资余额和RSI
+                    // 并行拉取换手率、融资余额和RSI
                     var promises = [];
+
+                    // 换手率必须走 date_sequence（cmd_history_quotation 不返回 TI 概念指数的换手率）
+                    promises.push(
+                        fetchTurnoverRatio(idxConfig.ifind, startDate, endDate)
+                            .then(function (tData) {
+                                if (tData && !tData.error && tData.dates && tData.turnover_ratio && tData.dates.length > 0) {
+                                    result.turnover_ratio = alignRSIData(
+                                        result.dates, tData.dates, tData.turnover_ratio
+                                    );
+                                }
+                            })
+                            .catch(function () { /* ignore */ })
+                    );
 
                     if (idxConfig.margin) {
                         promises.push(
@@ -536,6 +606,7 @@ var Fetch = (function () {
         updateToken: updateToken,
         fetchIndexHistory: fetchIndexHistory,
         fetchMargin: fetchMargin,
+        fetchTurnoverRatio: fetchTurnoverRatio,
         fetchRSI: fetchRSI,
         fetchRawData: fetchRawData,
         fetchAndCalculate: fetchAndCalculate,

@@ -467,6 +467,75 @@ def fetch_rsi_ifind(code: str, startdate: str, enddate: str) -> pd.DataFrame:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 换手率（date_sequence: ths_turnover_ratio_index）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def fetch_turnover_ifind(code: str, startdate: str, enddate: str) -> pd.DataFrame:
+    """
+    通过 iFinD date_sequence 获取换手率指标。
+    使用 ths_turnover_ratio_index（无参数）。
+
+    返回:
+        DataFrame: date, turnover_ratio
+        如果指数不支持该指标，返回空 DataFrame。
+    """
+    para = {
+        "codes": code,
+        "startdate": startdate.replace("-", ""),
+        "enddate": enddate.replace("-", ""),
+        "functionpara": {"Days": "Tradedays", "Fill": "Previous"},
+        "indipara": [{
+            "indicator": "ths_turnover_ratio_index",
+            "indiparams": [""],
+        }],
+    }
+    try:
+        resp = _session.post(
+            "https://quantapi.51ifind.com/api/v1/date_sequence",
+            json=para,
+            headers=_headers(),
+            timeout=30,
+        )
+        r = resp.json()
+        if r.get("errorcode") != 0:
+            log.warning(f"iFinD 换手率获取失败 {code}: errorcode={r.get('errorcode')}")
+            return pd.DataFrame(columns=["date", "turnover_ratio"])
+
+        tables = r.get("tables", [])
+        if not tables:
+            return pd.DataFrame(columns=["date", "turnover_ratio"])
+
+        item = tables[0]
+        times = item.get("time", [])
+        vals = item.get("table", {}).get("ths_turnover_ratio_index", [])
+        if not times or not vals:
+            return pd.DataFrame(columns=["date", "turnover_ratio"])
+
+        parsed = []
+        for v in vals:
+            if v is None or v == "null" or (isinstance(v, str) and v.strip() == ""):
+                parsed.append(float("nan"))
+            else:
+                try:
+                    parsed.append(float(v))
+                except (TypeError, ValueError):
+                    parsed.append(float("nan"))
+
+        has_valid = any(not pd.isna(v) for v in parsed)
+        if not has_valid:
+            log.info(f"iFinD 换手率对 {code} 无有效数据")
+            return pd.DataFrame(columns=["date", "turnover_ratio"])
+
+        df = pd.DataFrame({
+            "date": pd.to_datetime(times),
+            "turnover_ratio": parsed,
+        })
+        return df
+    except Exception as e:
+        log.warning(f"iFinD 换手率获取异常 {code}: {e}")
+        return pd.DataFrame(columns=["date", "turnover_ratio"])
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 独立测试
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 if __name__ == "__main__":
