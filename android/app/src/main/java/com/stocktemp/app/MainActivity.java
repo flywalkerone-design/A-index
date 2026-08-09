@@ -329,6 +329,8 @@ public class MainActivity extends AppCompatActivity {
                     // 转换 "2024-05-29" 格式
                     if (d.length() == 8 && !d.contains("-")) {
                         d = d.substring(0, 4) + "-" + d.substring(4, 6) + "-" + d.substring(6);
+                    } else if (d.length() >= 10) {
+                        d = d.substring(0, 10).replace('/', '-');
                     }
                     dates.put(d);
                 }
@@ -339,17 +341,17 @@ public class MainActivity extends AppCompatActivity {
                 String[] outCols = {"close", "volume", "amount", "turnover_ratio", "pe"};
                 for (int c = 0; c < cols.length; c++) {
                     JSONArray vals = table.optJSONArray(cols[c]);
-                    if (vals != null) {
-                        JSONArray out = new JSONArray();
-                        for (int i = 0; i < vals.length(); i++) {
-                            if (vals.isNull(i)) {
-                                out.put(JSONObject.NULL);
-                            } else {
-                                out.put(vals.optDouble(i, 0));
-                            }
+                    JSONArray out = new JSONArray();
+                    for (int i = 0; i < times.length(); i++) {
+                        if (vals == null || i >= vals.length() || vals.isNull(i)) {
+                            out.put(JSONObject.NULL);
+                            continue;
                         }
-                        result.put(outCols[c], out);
+                        double value = vals.optDouble(i, Double.NaN);
+                        out.put(Double.isNaN(value) || Double.isInfinite(value)
+                            ? JSONObject.NULL : value);
                     }
+                    result.put(outCols[c], out);
                 }
 
                 // changeRatio → change_pct
@@ -361,7 +363,7 @@ public class MainActivity extends AppCompatActivity {
                 return result.toString();
 
             } catch (RuntimeException e) {
-                if (e.getMessage().equals("NO_TOKEN")) {
+                if ("NO_TOKEN".equals(e.getMessage())) {
                     return "{\"error\":\"NO_TOKEN\"}";
                 }
                 return errorJson(e.getMessage());
@@ -423,42 +425,23 @@ public class MainActivity extends AppCompatActivity {
                 JSONArray dates = new JSONArray();
                 JSONArray mbArr = new JSONArray();
 
-                if (timeArr != null && timeArr.length() > 0) {
-                    // 有 time 字段：直接用 API 返回的交易日日期
-                    int n = Math.min(timeArr.length(), vals.length());
-                    for (int i = 0; i < n; i++) {
-                        String d = timeArr.getString(i);
-                        if (d.length() == 8 && !d.contains("-")) {
-                            d = d.substring(0, 4) + "-" + d.substring(4, 6) + "-" + d.substring(6);
-                        }
-                        dates.put(d);
-                        if (vals.isNull(i)) {
-                            mbArr.put(JSONObject.NULL);
-                        } else {
-                            mbArr.put(vals.optDouble(i, 0));
-                        }
+                if (timeArr == null || timeArr.length() == 0 || timeArr.length() != vals.length()) {
+                    return errorJson("融资余额日期和值长度不一致");
+                }
+                for (int i = 0; i < timeArr.length(); i++) {
+                    String d = timeArr.getString(i);
+                    if (d.length() == 8 && !d.contains("-")) {
+                        d = d.substring(0, 4) + "-" + d.substring(4, 6) + "-" + d.substring(6);
+                    } else if (d.length() >= 10) {
+                        d = d.substring(0, 10).replace('/', '-');
                     }
-                } else {
-                    // 无 time 字段：按自然日生成（跳过周末）
-                    java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy-MM-dd");
-                    java.util.Date start = sdf.parse(startDate);
-                    java.util.Date end = sdf.parse(endDate);
-                    java.util.Calendar cal = java.util.Calendar.getInstance();
-                    cal.setTime(start);
-                    int idx = 0;
-                    while (!cal.getTime().after(end) && idx < vals.length()) {
-                        int dow = cal.get(java.util.Calendar.DAY_OF_WEEK);
-                        // 跳过周末
-                        if (dow != java.util.Calendar.SATURDAY && dow != java.util.Calendar.SUNDAY) {
-                            dates.put(sdf.format(cal.getTime()));
-                            if (vals.isNull(idx)) {
-                                mbArr.put(JSONObject.NULL);
-                            } else {
-                                mbArr.put(vals.optDouble(idx, 0));
-                            }
-                            idx++;
-                        }
-                        cal.add(java.util.Calendar.DAY_OF_MONTH, 1);
+                    dates.put(d);
+                    if (vals.isNull(i)) {
+                        mbArr.put(JSONObject.NULL);
+                    } else {
+                        double value = vals.optDouble(i, Double.NaN);
+                        mbArr.put(Double.isNaN(value) || Double.isInfinite(value)
+                            ? JSONObject.NULL : value);
                     }
                 }
 
@@ -467,7 +450,95 @@ public class MainActivity extends AppCompatActivity {
                 return result.toString();
 
             } catch (RuntimeException e) {
-                if (e.getMessage().equals("NO_TOKEN")) {
+                if ("NO_TOKEN".equals(e.getMessage())) {
+                    return "{\"error\":\"NO_TOKEN\"}";
+                }
+                return errorJson(e.getMessage());
+            } catch (Exception e) {
+                return errorJson(e.getMessage());
+            }
+        }
+
+        /**
+         * 获取沪深两市融资统计。净买入直接使用 p03438_f013，避免余额差分改变口径。
+         * 返回 JSON: { dates:[], margin_balance:[], net_buy:[] } 或 { error: "..." }
+         */
+        @JavascriptInterface
+        public String fetchMarginMarketStats(String startDate, String endDate) {
+            try {
+                String token = ensureToken();
+                JSONObject para = new JSONObject();
+                para.put("reportname", "p03438");
+
+                JSONObject fp = new JSONObject();
+                fp.put("sdate", startDate.replace("-", ""));
+                fp.put("edate", endDate.replace("-", ""));
+                fp.put("sclx", "沪深两市");
+                fp.put("pl", "日");
+                para.put("functionpara", fp);
+                para.put("outputpara", "p03438_f001:Y,p03438_f003:Y,p03438_f004:Y,p03438_f005:Y,p03438_f013:Y");
+
+                String resp = httpPost(IFIND_BASE + "/data_pool", para.toString(), token);
+                JSONObject json = new JSONObject(resp);
+                if (json.optInt("errorcode", -1) != 0) {
+                    return errorJson(json.optString("errmsg", "API error"));
+                }
+
+                JSONArray tables = json.optJSONArray("tables");
+                if (tables == null || tables.length() == 0) {
+                    return "{\"dates\":[],\"margin_balance\":[],\"net_buy\":[]}";
+                }
+                JSONObject table = tables.getJSONObject(0).optJSONObject("table");
+                if (table == null) {
+                    return "{\"dates\":[],\"margin_balance\":[],\"net_buy\":[]}";
+                }
+
+                JSONArray sourceDates = table.optJSONArray("p03438_f001");
+                JSONArray sourceShTotals = table.optJSONArray("p03438_f003");
+                JSONArray sourceSzTotals = table.optJSONArray("p03438_f004");
+                JSONArray sourceBalances = table.optJSONArray("p03438_f005");
+                JSONArray sourceNetBuy = table.optJSONArray("p03438_f013");
+                JSONObject result = new JSONObject();
+                JSONArray dates = new JSONArray();
+                JSONArray balances = new JSONArray();
+                JSONArray netBuy = new JSONArray();
+                int count = sourceDates == null ? 0 : sourceDates.length();
+                for (int i = 0; i < count; i++) {
+                    double shTotal = sourceShTotals == null
+                        ? Double.NaN : sourceShTotals.optDouble(i, Double.NaN);
+                    double szTotal = sourceSzTotals == null
+                        ? Double.NaN : sourceSzTotals.optDouble(i, Double.NaN);
+                    if (!Double.isFinite(shTotal) || !Double.isFinite(szTotal)) continue;
+                    String date = sourceDates.optString(i, "").replace("/", "-");
+                    if (date.length() == 8 && !date.contains("-")) {
+                        date = date.substring(0, 4) + "-" + date.substring(4, 6) + "-" + date.substring(6);
+                    } else if (date.length() >= 10) {
+                        date = date.substring(0, 10);
+                    }
+                    if (!date.matches("\\d{4}-\\d{2}-\\d{2}")) continue;
+
+                    double balance = sourceBalances == null
+                        ? Double.NaN : sourceBalances.optDouble(i, Double.NaN);
+                    double dailyNetBuy = sourceNetBuy == null
+                        ? Double.NaN : sourceNetBuy.optDouble(i, Double.NaN);
+                    dates.put(date);
+                    if (!Double.isFinite(balance)) {
+                        balances.put(JSONObject.NULL);
+                    } else {
+                        balances.put(balance);
+                    }
+                    if (!Double.isFinite(dailyNetBuy)) {
+                        netBuy.put(JSONObject.NULL);
+                    } else {
+                        netBuy.put(dailyNetBuy);
+                    }
+                }
+                result.put("dates", dates);
+                result.put("margin_balance", balances);
+                result.put("net_buy", netBuy);
+                return result.toString();
+            } catch (RuntimeException e) {
+                if ("NO_TOKEN".equals(e.getMessage())) {
                     return "{\"error\":\"NO_TOKEN\"}";
                 }
                 return errorJson(e.getMessage());
@@ -534,6 +605,8 @@ public class MainActivity extends AppCompatActivity {
                             String d = timeArr.getString(j);
                             if (d.length() == 8 && !d.contains("-")) {
                                 d = d.substring(0, 4) + "-" + d.substring(4, 6) + "-" + d.substring(6);
+                            } else if (d.length() >= 10) {
+                                d = d.substring(0, 10).replace('/', '-');
                             }
                             outTimes.put(d);
                         }
@@ -548,7 +621,7 @@ public class MainActivity extends AppCompatActivity {
                 return result.toString();
 
             } catch (RuntimeException e) {
-                if (e.getMessage().equals("NO_TOKEN")) {
+                if ("NO_TOKEN".equals(e.getMessage())) {
                     return "{\"error\":\"NO_TOKEN\"}";
                 }
                 return errorJson(e.getMessage());
@@ -567,7 +640,7 @@ public class MainActivity extends AppCompatActivity {
                 String token = ensureToken();
                 return "{\"valid\":true}";
             } catch (RuntimeException e) {
-                if (e.getMessage().equals("NO_TOKEN")) {
+                if ("NO_TOKEN".equals(e.getMessage())) {
                     return "{\"valid\":false,\"error\":\"未设置token\"}";
                 }
                 return "{\"valid\":false,\"error\":\"" + escapeJson(e.getMessage()) + "\"}";

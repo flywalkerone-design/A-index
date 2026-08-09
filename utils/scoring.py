@@ -37,17 +37,17 @@ def calc_market_score(df: pd.DataFrame, use_margin: bool = True) -> pd.DataFrame
     """
     df = df.copy()
 
-    rank_cols = ["rank_close", "rank_turnover", "rank_pe",
-                 "rank_rsi", "rank_margin"]
-
-    available = [c for c in rank_cols if c in df.columns]
-    if not available:
-        log.error("无可用排名列，无法计算市场温度")
+    rank_cols = ["rank_close", "rank_turnover", "rank_pe", "rank_rsi"]
+    if use_margin:
+        rank_cols.append("rank_margin")
+    missing = [column for column in rank_cols if column not in df.columns]
+    if missing:
+        log.error(f"缺少必要排名列，无法计算市场温度: {missing}")
         df["market_score"] = np.nan
         return df
 
     # 等权平均，任何因子缺失则该天为 NaN（不跳过、不填充）
-    df["market_score"] = df[available].mean(axis=1, skipna=False)
+    df["market_score"] = df[rank_cols].mean(axis=1, skipna=False)
 
     return df
 

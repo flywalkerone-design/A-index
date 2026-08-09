@@ -51,15 +51,34 @@ def calc_rsi(df: pd.DataFrame, period: int = None) -> pd.DataFrame:
     period = period or RSI_PERIOD
     df = df.copy()
 
-    delta = df["close"].diff()
-    gain = delta.clip(lower=0)
-    loss = (-delta).clip(lower=0)
+    closes = pd.to_numeric(df["close"], errors="coerce").to_numpy(dtype=float)
+    rsi = np.full(len(closes), np.nan)
+    if len(closes) <= period:
+        df["RSI"] = rsi
+        return df
 
-    avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    delta = np.diff(closes)
+    gains = np.where(delta > 0, delta, 0.0)
+    losses = np.where(delta < 0, -delta, 0.0)
+    avg_gain = gains[:period].mean()
+    avg_loss = losses[:period].mean()
 
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    df["RSI"] = 100 - (100 / (1 + rs))
+    if avg_loss == 0:
+        rsi[period] = 100.0 if avg_gain > 0 else np.nan
+    else:
+        rsi[period] = 100 - (100 / (1 + avg_gain / avg_loss))
+
+    for index in range(period + 1, len(closes)):
+        gain = gains[index - 1]
+        loss = losses[index - 1]
+        avg_gain = (avg_gain * (period - 1) + gain) / period
+        avg_loss = (avg_loss * (period - 1) + loss) / period
+        if avg_loss == 0:
+            rsi[index] = 100.0 if avg_gain > 0 else 50.0
+        else:
+            rsi[index] = 100 - (100 / (1 + avg_gain / avg_loss))
+
+    df["RSI"] = rsi
 
     return df
 
@@ -89,11 +108,12 @@ def percentrank_inc(series: pd.Series, window: int) -> pd.Series:
         current = arr[-1]
         if np.isnan(current):
             return np.nan
-        n = len(arr)
+        values = arr[~np.isnan(arr)]
+        n = len(values)
         if n < 2:
             return np.nan
         # COUNTIF(array, < x)
-        count_below = np.sum(arr < current)
+        count_below = np.sum(values < current)
         return count_below / (n - 1)
 
     return series.rolling(window=window, min_periods=2).apply(_percentrank, raw=True)
@@ -151,8 +171,12 @@ def calc_all_percentile_ranks(df: pd.DataFrame, use_margin: bool = True) -> pd.D
     # 1. 收盘价百分位
     df["rank_close"] = percentrank_inc(df["close"], window)
 
-    # 2. 成交额百分位
-    df["rank_turnover"] = percentrank_inc(df["amount"], window)
+    # 2. 换手率百分位（当前模型口径）
+    if "turnover_ratio" in df.columns and df["turnover_ratio"].notna().sum() >= 2:
+        df["rank_turnover"] = percentrank_inc(df["turnover_ratio"], window)
+    else:
+        df["rank_turnover"] = np.nan
+        log.warning("换手率数据不足，rank_turnover 填充 NaN")
 
     # 3. PE百分位
     if "pe" in df.columns and df["pe"].notna().sum() >= 2:
@@ -171,8 +195,6 @@ def calc_all_percentile_ranks(df: pd.DataFrame, use_margin: bool = True) -> pd.D
         else:
             df["rank_margin"] = np.nan
             log.warning("融资余额数据不足，rank_margin 填充 NaN")
-
-    log.info("PERCENTRANK.INC 滚动排名计算完成")
 
     log.info("PERCENTRANK.INC 滚动排名计算完成")
 
@@ -199,8 +221,11 @@ def calc_all_indicators(df: pd.DataFrame, use_margin: bool = True) -> pd.DataFra
     df = calc_daily_return(df)
     log.info("  日涨跌幅计算完成")
 
-    # 2. RSI（周期=6，与 Excel 一致）
-    df = calc_rsi(df)
+    # 2. RSI：优先 iFinD，指标不支持时使用本地 Wilder RSI(6)
+    if "rsi_ifind" in df.columns and df["rsi_ifind"].notna().sum() >= 2:
+        df["RSI"] = pd.to_numeric(df["rsi_ifind"], errors="coerce")
+    else:
+        df = calc_rsi(df)
     log.info(f"  RSI({RSI_PERIOD}) 计算完成")
 
     # 3. 百分位排名

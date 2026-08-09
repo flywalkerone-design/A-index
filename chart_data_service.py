@@ -17,15 +17,24 @@ DATA_START_DATE = "2024-01-01"
 # iFinD API 数据获取
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# 11 只宽基 ETF（6位代码 -> iFinD .OF 代码）
+# 11 只宽基 ETF（上市基金必须使用交易所后缀，不能使用 .OF）
 ETF_IFIND_CODES = [
-    "510300.OF", "510050.OF", "588000.OF", "512100.OF",
-    "159915.OF", "510310.OF", "510500.OF", "510330.OF",
-    "588080.OF", "159919.OF", "159845.OF",
+    "510300.SH", "510050.SH", "588000.SH", "512100.SH",
+    "159915.SZ", "510310.SH", "510500.SH", "510330.SH",
+    "588080.SH", "159919.SZ", "159845.SZ",
 ]
 
-# 融资余额：上证指数 + 深证A股，求和得沪深合计
-MARGIN_CODES = ["000001.SH", "399107.SZ"]
+MARGIN_REPORT = "p03438"
+MARGIN_DATE_FIELD = "p03438_f001"
+MARGIN_SH_TOTAL_FIELD = "p03438_f003"
+MARGIN_SZ_TOTAL_FIELD = "p03438_f004"
+MARGIN_BALANCE_FIELD = "p03438_f005"
+MARGIN_NET_BUY_FIELD = "p03438_f013"
+
+
+def _normalize_api_date(value):
+    parsed = pd.to_datetime(value, errors="coerce")
+    return None if pd.isna(parsed) else parsed.strftime("%Y-%m-%d")
 
 
 def _date_sequence_chunk(codes, indicator, start, end, extra_params=None):
@@ -54,83 +63,65 @@ def _date_sequence_chunk(codes, indicator, start, end, extra_params=None):
         thscode = table.get("thscode", "")
         times = table.get("time", [])
         vals = table.get("table", {}).get(indicator, [])
-        for i, t in enumerate(times):
-            date_str = str(t)[:10]
-            val = vals[i] if i < len(vals) else None
+        if len(times) != len(vals):
+            log.warning(f"date_sequence length mismatch: {thscode} {indicator}")
+            continue
+        for date_value, val in zip(times, vals):
+            date_str = _normalize_api_date(date_value)
+            if date_str is None:
+                continue
             result.append({"date": date_str, "code": thscode, "value": val})
     return result
 
 
-def _fetch_margin_ifind_direct(start, end):
-    """获取融资余额 + 融资买入额 + 融资偿还额（一次请求多指标）"""
-    from datetime import datetime as dt
-
-    all_rows = []
-    chunk_start = dt.strptime(start, "%Y-%m-%d")
-    chunk_end = dt.strptime(end, "%Y-%m-%d")
-
-    # 同时请求三个指标：余额、买入额、偿还额
-    indicators = [
-        {"indicator": "ths_margin_trading_balance_index", "indiparams": [""]},
-        {"indicator": "ths_margin_buy_value_index", "indiparams": [""]},
-        {"indicator": "ths_margin_repayment_value_index", "indiparams": [""]},
-    ]
-
-    for code in MARGIN_CODES:
-        code_rows = []
-        cs = chunk_start
-        while cs <= chunk_end:
-            ce = min(cs + timedelta(days=550), chunk_end)
-            rows = _date_sequence_multi_indicator(code, indicators, cs.strftime("%Y-%m-%d"), ce.strftime("%Y-%m-%d"))
-            if not rows:
-                break
-            code_rows.extend(rows)
-            if len(rows) < 10:
-                break
-            cs = ce + timedelta(days=1)
-
-        # 去重（chunk 边界可能重叠）
-        seen = set()
-        for r in code_rows:
-            if r["date"] not in seen:
-                seen.add(r["date"])
-                all_rows.append(r)
-
-    return all_rows
-
-
-def _date_sequence_multi_indicator(code, indicators, start, end):
-    """调用 date_sequence API，一次请求多个指标"""
+def _fetch_margin_report(start, end):
+    """读取市场交易统计报表中的融资余额和专用净买入字段。"""
     para = {
-        "codes": code,
-        "startdate": start.replace("-", ""),
-        "enddate": end.replace("-", ""),
-        "functionpara": {"Days": "Tradedays", "Fill": "Previous"},
-        "indipara": indicators,
+        "reportname": MARGIN_REPORT,
+        "functionpara": {
+            "sdate": start.replace("-", ""),
+            "edate": end.replace("-", ""),
+            "sclx": "沪深两市",
+            "pl": "日",
+        },
+        "outputpara": (
+            f"{MARGIN_DATE_FIELD}:Y,"
+            f"{MARGIN_SH_TOTAL_FIELD}:Y,"
+            f"{MARGIN_SZ_TOTAL_FIELD}:Y,"
+            f"{MARGIN_BALANCE_FIELD}:Y,"
+            f"{MARGIN_NET_BUY_FIELD}:Y"
+        ),
     }
-
     resp = _session.post(
-        "https://quantapi.51ifind.com/api/v1/date_sequence",
+        "https://quantapi.51ifind.com/api/v1/data_pool",
         json=para, headers=_headers(), timeout=60,
     )
     r = resp.json()
     if r.get("errorcode") != 0:
-        log.warning(f"date_sequence error: {r.get('errmsg')} (code={code})")
+        log.warning(f"data_pool error: {r.get('errmsg')} (report={MARGIN_REPORT})")
         return []
 
+    tables = r.get("tables", [])
+    if not tables:
+        return []
+    table = tables[0].get("table", {})
+    dates = table.get(MARGIN_DATE_FIELD, [])
+    sh_totals = table.get(MARGIN_SH_TOTAL_FIELD, [])
+    sz_totals = table.get(MARGIN_SZ_TOTAL_FIELD, [])
+    balances = table.get(MARGIN_BALANCE_FIELD, [])
+    net_buys = table.get(MARGIN_NET_BUY_FIELD, [])
     result = []
-    for table in r.get("tables", []):
-        thscode = table.get("thscode", "")
-        times = table.get("time", [])
-        tbl = table.get("table", {})
-        for i, t in enumerate(times):
-            date_str = str(t)[:10]
-            row = {"date": date_str, "code": thscode}
-            for ind in indicators:
-                key = ind["indicator"]
-                vals = tbl.get(key, [])
-                row[key] = vals[i] if i < len(vals) else None
-            result.append(row)
+    for i, raw_date in enumerate(dates):
+        date = _normalize_api_date(raw_date)
+        if date is None:
+            continue
+        result.append({
+            "date": date,
+            "sh_total": sh_totals[i] if i < len(sh_totals) else None,
+            "sz_total": sz_totals[i] if i < len(sz_totals) else None,
+            "balance": balances[i] if i < len(balances) else None,
+            "net_buy": net_buys[i] if i < len(net_buys) else None,
+        })
     return result
 
 
@@ -157,96 +148,30 @@ def _fetch_market_from_ifind(start, end):
 
 
 def _fetch_margin_from_ifind(start, end):
-    """沪深两市融资余额合计 + 峰值/回撤/净买入
-
-    净买入优先使用 iFinD 直接指标（融资买入额 - 融资偿还额），
-    若指标不可用则回退到余额差值法。
-    """
-    raw = _fetch_margin_ifind_direct(start, end)
+    """沪深两市融资余额、历史峰值、回撤和 iFinD 专用净买入。"""
+    raw = _fetch_margin_report(start, end)
     if not raw:
         return []
 
-    # 检查是否有买入额/偿还额数据
-    has_buy_data = any(r.get("ths_margin_buy_value_index") is not None for r in raw)
-
-    # 按日期聚合：SH + SZ 求和
-    daily = {}
-    for r in raw:
-        d = r["date"]
-        if d not in daily:
-            daily[d] = {"sh_bal": None, "sz_bal": None, "sh_buy": None, "sz_buy": None, "sh_rep": None, "sz_rep": None}
-        if r["code"] == "000001.SH":
-            daily[d]["sh_bal"] = float(r["ths_margin_trading_balance_index"]) if r.get("ths_margin_trading_balance_index") is not None else None
-            daily[d]["sh_buy"] = float(r["ths_margin_buy_value_index"]) if r.get("ths_margin_buy_value_index") is not None else None
-            daily[d]["sh_rep"] = float(r["ths_margin_repayment_value_index"]) if r.get("ths_margin_repayment_value_index") is not None else None
-        elif r["code"] == "399107.SZ":
-            daily[d]["sz_bal"] = float(r["ths_margin_trading_balance_index"]) if r.get("ths_margin_trading_balance_index") is not None else None
-            daily[d]["sz_buy"] = float(r["ths_margin_buy_value_index"]) if r.get("ths_margin_buy_value_index") is not None else None
-            daily[d]["sz_rep"] = float(r["ths_margin_repayment_value_index"]) if r.get("ths_margin_repayment_value_index") is not None else None
-
-    # 排序
-    sorted_dates = sorted(daily.keys())
     rows = []
-    for d in sorted_dates:
-        item = daily[d]
-        parts_bal = [v for v in [item["sh_bal"], item["sz_bal"]] if v is not None]
-        total = sum(parts_bal) / 1e8 if parts_bal else None  # 元 -> 亿元
-
-        # 净买入：优先用买入额-偿还额
-        net_buy = None
-        if has_buy_data:
-            buy_parts = [v for v in [item["sh_buy"], item["sz_buy"]] if v is not None]
-            rep_parts = [v for v in [item["sh_rep"], item["sz_rep"]] if v is not None]
-            if buy_parts and rep_parts:
-                net_buy = round((sum(buy_parts) - sum(rep_parts)) / 1e8, 2)
-
-        rows.append({"date": d, "balance": total, "_direct_net_buy": net_buy})
-
-    # T+1 调整：最新交易日余额可能未发布或异常跳变
-    prev_balance = None
-    latest_idx = len(rows) - 1
-    for i, item in enumerate(rows):
-        b = item["balance"]
-        is_missing = b is None or b <= 0
-        is_latest_jump = (
-            i == latest_idx
-            and prev_balance is not None
-            and b is not None
-            and b < prev_balance * 0.8
-        )
-        if is_missing or is_latest_jump:
-            item["balance"] = prev_balance
-            item["t_plus_one_adjusted"] = True
-        else:
-            item["t_plus_one_adjusted"] = False
-        if item["balance"] is not None:
-            prev_balance = item["balance"]
-
-    # 计算峰值、回撤、净买入
     peak = None
-    prev_balance = None
-    for item in rows:
-        b = item["balance"]
+    for item in sorted(raw, key=lambda row: row["date"]):
+        if _number(item.get("sh_total")) is None or _number(item.get("sz_total")) is None:
+            continue
+        b = _number(item.get("balance"))
+        net_buy = _number(item.get("net_buy"))
+        if b is None:
+            continue
         if b is not None:
             peak = max(peak, b) if peak is not None else b
-        item["peak"] = peak
-        item["drawdown"] = max(0.0, peak - b) if (peak is not None and b is not None) else 0.0
-
-        # 净买入：优先用直接指标，回退到余额差值
-        if item.get("t_plus_one_adjusted") and prev_balance is not None:
-            item["net_buy"] = 0.0
-        elif item["_direct_net_buy"] is not None:
-            item["net_buy"] = item["_direct_net_buy"]
-        elif b is not None and prev_balance is not None:
-            item["net_buy"] = round(b - prev_balance, 2)
-        else:
-            item["net_buy"] = 0.0
-
-        # 清理临时字段
-        del item["_direct_net_buy"]
-
-        if b is not None:
-            prev_balance = b
+        rows.append({
+            "date": item["date"],
+            "balance": round(b, 2),
+            "peak": round(peak, 2),
+            "drawdown": round(max(0.0, peak - b), 2),
+            "net_buy": round(net_buy, 2) if net_buy is not None else None,
+            "t_plus_one_adjusted": False,
+        })
 
     return rows
 
@@ -267,23 +192,30 @@ def _fetch_etf_from_ifind(start, end):
             cs.strftime("%Y-%m-%d"), ce.strftime("%Y-%m-%d"),
         )
         all_rows.extend(rows)
-        if len(rows) < 10:
-            break
         cs = ce + timedelta(days=1)
 
     if not all_rows:
         return {"rows": []}
 
-    # 按日期汇总
+    # 按日期汇总；任一目标 ETF 缺失时不输出该日，避免部分合计冒充全量。
     daily = {}
     for r in all_rows:
         d = r["date"]
-        v = r["value"]
-        if v is not None:
-            val_yi = float(v) / 1e8  # 元 -> 亿元
-            daily[d] = daily.get(d, 0) + val_yi
+        value = _number(r["value"])
+        code = r.get("code")
+        if value is None or code not in ETF_IFIND_CODES:
+            continue
+        entry = daily.setdefault(d, {"total": 0.0, "codes": set()})
+        if code in entry["codes"]:
+            continue
+        entry["total"] += value / 1e8  # 元 -> 亿元
+        entry["codes"].add(code)
 
-    rows = [{"date": d, "total": round(v, 2)} for d, v in sorted(daily.items())]
+    rows = [
+        {"date": date, "total": round(entry["total"], 2)}
+        for date, entry in sorted(daily.items())
+        if len(entry["codes"]) == len(ETF_IFIND_CODES)
+    ]
     return {"rows": rows}
 
 

@@ -17,6 +17,9 @@ var App = (function () {
     var CHART_DATA_LOADING = null;
     var CHART_DATA_TIME = 0;
     var CHART_DATA_TTL = 5 * 60 * 1000; // 5分钟内不重复请求
+    var CHART_DATA_CACHE_KEY = "a_stock_chart_snapshot_v2";
+    var CHART_REFRESH_RETRY_MS = 6 * 60 * 60 * 1000;
+    var CHART_OVERLAP_DAYS = 10;
     var CHART_RANGES = {};
     var DETAIL_CODE = null;
     var MARGIN_SORT_KEY = "date";
@@ -25,7 +28,7 @@ var App = (function () {
     var POSTER_EDITING = false;
     var ACTIVE_CHART_LANDSCAPE = null;
     var SELECTED_DATE = null;  // 日期回溯：选中的日期，null=最新
-    var DATA_CACHE_KEY = "a_stock_data_snapshot_v5";
+    var DATA_CACHE_KEY = "a_stock_data_snapshot_v6";
     var REFRESH_IN_PROGRESS = false;
     var HAMMER_MANAGERS = [];  // chartjs-plugin-zoom 两指平移用的 Hammer 实例
 
@@ -34,14 +37,33 @@ var App = (function () {
     var cfg = loadCfg();
 
     function loadCfg() {
+        var allCodes = AppConfig.getAllIndexes().map(function (x) { return x.code; });
         try {
             var s = localStorage.getItem(SK);
             if (s) {
                 var c = JSON.parse(s);
-                if (c.en && c.ord) return c;
+                if (c.en && c.ord) {
+                    var migrateCodes = function (codes) {
+                        var seen = {};
+                        return (codes || []).map(function (code) {
+                            return code === "980092" ? "931752" : code;
+                        }).filter(function (code) {
+                            if (allCodes.indexOf(code) < 0 || seen[code]) return false;
+                            seen[code] = true;
+                            return true;
+                        });
+                    };
+                    c.en = migrateCodes(c.en);
+                    c.ord = migrateCodes(c.ord);
+                    c.extremeEn = migrateCodes(c.extremeEn || allCodes);
+                    allCodes.forEach(function (code) {
+                        if (c.ord.indexOf(code) < 0) c.ord.push(code);
+                    });
+                    localStorage.setItem(SK, JSON.stringify(c));
+                    return c;
+                }
             }
         } catch (e) { /* ignore */ }
-        var allCodes = AppConfig.getAllIndexes().map(function (x) { return x.code; });
         return {
             en: allCodes.slice(),
             ord: allCodes.slice(),
@@ -49,7 +71,13 @@ var App = (function () {
         };
     }
 
-    function vis() {
+    function allVis() {
+        return cfg.ord
+            .map(function (c) { return AppConfig.getIndexByCode(c); })
+            .filter(Boolean);
+    }
+
+    function posterVis() {
         return cfg.ord
             .filter(function (c) { return cfg.en.indexOf(c) >= 0; })
             .map(function (c) { return AppConfig.getIndexByCode(c); })
@@ -58,7 +86,7 @@ var App = (function () {
 
     // 极端板块专属可见列表
     function extremeVis() {
-        return vis().filter(function (x) {
+        return posterVis().filter(function (x) {
             return (cfg.extremeEn || []).indexOf(x.code) >= 0;
         });
     }
@@ -461,8 +489,8 @@ var App = (function () {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 极端板块检测：以最新交易日为起点，近5个交易日全部满足条件才纳入
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    function findExtremeSectors() {
-        var all = extremeVis();
+    function findExtremeSectors(indexes) {
+        var all = indexes || extremeVis();
         var extreme = { cold: [], hot: [] };
 
         all.forEach(function (x) {
@@ -500,7 +528,7 @@ var App = (function () {
 
     // 扫描全部28个指数（不受extremeEn限制），返回code数组供设置面板用
     function findExtremeSectorsAll() {
-        var all = vis();
+        var all = allVis();
         var coldAll = [], hotAll = [];
 
         all.forEach(function (x) {
@@ -559,7 +587,8 @@ var App = (function () {
     function ensurePosterLayout() {
         var page = document.getElementById("pageHome");
         if (!page) return;
-        var ids = ["posterLight", "posterCombined", "posterSector", "posterSmart", "posterExtremeCold", "posterExtremeHot"];
+        var ids = ["posterCombined", "posterLight", "posterSmart", "posterSector", "posterExtremeCold", "posterExtremeHot"];
+        var oldDefaultOrder = ["posterLight", "posterCombined", "posterSector", "posterSmart", "posterExtremeCold", "posterExtremeHot"];
         ids.forEach(function (id) {
             var card = document.getElementById(id);
             if (!card || card.parentElement.classList.contains("poster-item")) return;
@@ -582,6 +611,10 @@ var App = (function () {
         });
 
         var saved = readPosterLayout();
+        if (saved.order.join(",") === oldDefaultOrder.join(",")) {
+            saved.order = ids.slice();
+            try { localStorage.setItem(POSTER_LAYOUT_KEY, JSON.stringify(saved)); } catch (e) { /* ignore */ }
+        }
         var wrappers = {};
         Array.prototype.slice.call(page.children).filter(function (item) {
             return item.classList && item.classList.contains("poster-item");
@@ -644,7 +677,7 @@ var App = (function () {
     }
 
     function renderPosters() {
-        var v = vis();
+        var v = posterVis();
         var ds = getDisplayDateStr();
         var extreme = findExtremeSectors();
 
@@ -704,8 +737,8 @@ var App = (function () {
     }
 
     function renderAllPage() {
-        var v = vis();
-        var extreme = findExtremeSectors();
+        var v = allVis();
+        var extreme = findExtremeSectors(v);
 
         var mainV = v.filter(function (x) { return x.group === "main" && DATA[x.code]; });
         document.getElementById("allMain").innerHTML = renderCardListHtml(mainV);
@@ -1125,31 +1158,109 @@ var App = (function () {
     }
 
     // ━━━ 从 iFinD API 直接获取图表数据（Android 端实时获取）━━━
-    var ETF_IFIND_CODES = ["510300.OF", "510050.OF", "588000.OF", "512100.OF",
-        "159915.OF", "510310.OF", "510500.OF", "510330.OF",
-        "588080.OF", "159919.OF", "159845.OF"];
-    var MARGIN_API_CODES = ["000001.SH", "399107.SZ"];
+    var ETF_IFIND_CODES = ["510300.SH", "510050.SH", "588000.SH", "512100.SH",
+        "159915.SZ", "510310.SH", "510500.SH", "510330.SH",
+        "588080.SH", "159919.SZ", "159845.SZ"];
 
-    function fetchChartDataFromAPI() {
+    function shiftDate(dateStr, days) {
+        var date = new Date(dateStr + "T00:00:00");
+        date.setDate(date.getDate() + days);
+        return formatDate(date);
+    }
+
+    function chartRows(data, key) {
+        if (!data) return [];
+        if (key === "etf") return data.etf && Array.isArray(data.etf.rows) ? data.etf.rows : [];
+        return Array.isArray(data[key]) ? data[key] : [];
+    }
+
+    function mergeChartRows(oldRows, newRows) {
+        var byDate = {};
+        (oldRows || []).forEach(function (row) {
+            if (row && /^\d{4}-\d{2}-\d{2}$/.test(row.date || "")) byDate[row.date] = row;
+        });
+        (newRows || []).forEach(function (row) {
+            if (row && /^\d{4}-\d{2}-\d{2}$/.test(row.date || "")) byDate[row.date] = row;
+        });
+        return Object.keys(byDate).sort().map(function (date) { return byDate[date]; });
+    }
+
+    function mergeChartRowsByFreshness(oldRows, newRows) {
+        oldRows = oldRows || [];
+        newRows = newRows || [];
+        var oldLatest = oldRows.length ? oldRows[oldRows.length - 1].date : "";
+        var newLatest = newRows.length ? newRows[newRows.length - 1].date : "";
+        return newLatest >= oldLatest
+            ? mergeChartRows(oldRows, newRows)
+            : mergeChartRows(newRows, oldRows);
+    }
+
+    function mergeChartData(base, fresh) {
+        base = base || {};
+        fresh = fresh || {};
+        return {
+            market: mergeChartRowsByFreshness(chartRows(base, "market"), chartRows(fresh, "market")),
+            margin: mergeChartRowsByFreshness(chartRows(base, "margin"), chartRows(fresh, "margin")),
+            etf: { rows: mergeChartRowsByFreshness(chartRows(base, "etf"), chartRows(fresh, "etf")) },
+            updated_at: fresh.updated_at || base.updated_at || "",
+            _checkedAt: fresh._checkedAt || base._checkedAt || 0,
+        };
+    }
+
+    function latestChartDate(data, key) {
+        var rows = chartRows(data, key);
+        return rows.length ? rows[rows.length - 1].date : "";
+    }
+
+    function chartDataIsCurrent(data) {
+        var marketTarget = getLatestTradeDate();
+        var marginTarget = previousTradeDate(marketTarget);
+        return latestChartDate(data, "market") >= marketTarget &&
+            latestChartDate(data, "margin") >= marginTarget &&
+            latestChartDate(data, "etf") >= marketTarget;
+    }
+
+    function chartRequestStart(data, key, fallback) {
+        var latest = latestChartDate(data, key);
+        if (!latest) return fallback;
+        var overlap = shiftDate(latest, -CHART_OVERLAP_DAYS);
+        return overlap < fallback ? fallback : overlap;
+    }
+
+    function loadChartSnapshot() {
+        try {
+            var raw = localStorage.getItem(CHART_DATA_CACHE_KEY);
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function saveChartSnapshot(data) {
+        try { localStorage.setItem(CHART_DATA_CACHE_KEY, JSON.stringify(data)); } catch (e) { /* ignore */ }
+    }
+
+    function fetchChartDataFromAPI(base) {
         var IS_ANDROID = !!(window.Android && window.Android.isAndroid && window.Android.isAndroid());
         if (!IS_ANDROID) return Promise.reject(new Error("not android"));
 
         var startDate = new Date();
         startDate.setDate(startDate.getDate() - 365 * 2 - 30);
-        var start = formatDate(startDate);
+        var fallbackStart = formatDate(startDate);
         var end = formatDate(new Date());
 
         return Promise.all([
-            fetchMarketChartAPI(start, end),
-            fetchMarginChartAPI(start, end),
-            fetchEtfChartAPI(start, end),
+            fetchMarketChartAPI(chartRequestStart(base, "market", fallbackStart), end),
+            fetchMarginChartAPI(chartRequestStart(base, "margin", fallbackStart), end),
+            fetchEtfChartAPI(chartRequestStart(base, "etf", fallbackStart), end),
         ]).then(function (results) {
-            return {
+            return mergeChartData(base, {
                 market: results[0],
                 margin: results[1],
                 etf: results[2],
                 updated_at: new Date().toLocaleString("zh-CN"),
-            };
+                _checkedAt: Date.now(),
+            });
         });
     }
 
@@ -1177,73 +1288,40 @@ var App = (function () {
     }
 
     function fetchMarginChartAPI(start, end) {
-        // 分别获取 SH 和 SZ 融资余额，再汇总
-        var promises = MARGIN_API_CODES.map(function (code) {
-            return Fetch.fetchMargin(code, start, end).then(function (data) {
-                if (!data || data.error || !data.dates) return {};
-                var map = {};
+        return new Promise(function (resolve) {
+            try {
+                var raw = window.Android.fetchMarginMarketStats(start, end);
+                var data = JSON.parse(raw);
+                if (!data || data.error || !data.dates) {
+                    resolve([]);
+                    return;
+                }
+                var rows = [];
                 for (var i = 0; i < data.dates.length; i++) {
-                    var v = data.margin_balance ? data.margin_balance[i] : null;
-                    map[data.dates[i]] = v !== null && v !== undefined && !isNaN(v) ? v / 1e8 : null;
+                    var balance = data.margin_balance ? data.margin_balance[i] : null;
+                    var netBuy = data.net_buy ? data.net_buy[i] : null;
+                    rows.push({
+                        date: data.dates[i],
+                        balance: balance,
+                        net_buy: netBuy,
+                        t_plus_one_adjusted: false,
+                    });
                 }
-                return map;
-            }).catch(function () { return {}; });
-        });
-
-        return Promise.all(promises).then(function (maps) {
-            var shMap = maps[0] || {};
-            var szMap = maps[1] || {};
-            var dateSet = {};
-            Object.keys(shMap).forEach(function (d) { dateSet[d] = true; });
-            Object.keys(szMap).forEach(function (d) { dateSet[d] = true; });
-            var sortedDates = Object.keys(dateSet).sort();
-
-            var rows = [];
-            var prevBalance = null;
-            var peak = null;
-            var latestIdx = sortedDates.length - 1;
-
-            for (var i = 0; i < sortedDates.length; i++) {
-                var d = sortedDates[i];
-                var sh = shMap[d];
-                var sz = szMap[d];
-                var parts = [];
-                if (sh !== null && sh !== undefined) parts.push(sh);
-                if (sz !== null && sz !== undefined) parts.push(sz);
-                var total = parts.length ? parts.reduce(function (a, b) { return a + b; }, 0) : null;
-
-                // T+1 调整
-                var isMissing = total === null || total <= 0;
-                var isLatestJump = (i === latestIdx && prevBalance !== null && total !== null && total < prevBalance * 0.8);
-                var adjusted = false;
-                if (isMissing || isLatestJump) {
-                    total = prevBalance;
-                    adjusted = true;
-                }
-
-                if (total !== null) {
-                    peak = peak !== null ? Math.max(peak, total) : total;
-                }
-                var drawdown = (peak !== null && total !== null) ? Math.max(0, peak - total) : 0;
-                var netBuy = 0;
-                if (adjusted && prevBalance !== null) {
-                    netBuy = 0;
-                } else if (total !== null && prevBalance !== null) {
-                    netBuy = Math.round((total - prevBalance) * 100) / 100;
-                }
-
-                rows.push({
-                    date: d,
-                    balance: total !== null ? Math.round(total * 100) / 100 : null,
-                    peak: peak !== null ? Math.round(peak * 100) / 100 : null,
-                    drawdown: Math.round(drawdown * 100) / 100,
-                    net_buy: netBuy,
-                    t_plus_one_adjusted: adjusted,
+                rows.sort(function (a, b) { return a.date.localeCompare(b.date); });
+                var peak = null;
+                rows.forEach(function (row) {
+                    if (row.balance !== null && row.balance !== undefined && !isNaN(row.balance)) {
+                        peak = peak === null ? row.balance : Math.max(peak, row.balance);
+                    }
+                    row.peak = peak;
+                    row.drawdown = peak !== null && row.balance !== null
+                        ? Math.max(0, peak - row.balance)
+                        : null;
                 });
-
-                if (total !== null) prevBalance = total;
+                resolve(rows);
+            } catch (e) {
+                resolve([]);
             }
-            return rows;
         });
     }
 
@@ -1260,18 +1338,26 @@ var App = (function () {
                 var daily = {};
                 for (var t = 0; t < resp.tables.length; t++) {
                     var table = resp.tables[t];
+                    var code = table.thscode || "";
+                    if (ETF_IFIND_CODES.indexOf(code) < 0) continue;
                     var times = table.time || [];
                     var vals = (table.table || {})[ "ths_netcashflow_fund"] || [];
+                    if (times.length !== vals.length) continue;
                     for (var i = 0; i < times.length; i++) {
                         var v = vals[i];
                         if (v !== null && v !== undefined && !isNaN(v)) {
                             var yi = v / 1e8;
-                            daily[times[i]] = (daily[times[i]] || 0) + yi;
+                            if (!daily[times[i]]) daily[times[i]] = { total: 0, codes: {} };
+                            if (daily[times[i]].codes[code]) continue;
+                            daily[times[i]].total += yi;
+                            daily[times[i]].codes[code] = true;
                         }
                     }
                 }
-                var rows = Object.keys(daily).sort().map(function (d) {
-                    return { date: d, total: Math.round(daily[d] * 100) / 100 };
+                var rows = Object.keys(daily).sort().filter(function (d) {
+                    return Object.keys(daily[d].codes).length === ETF_IFIND_CODES.length;
+                }).map(function (d) {
+                    return { date: d, total: Math.round(daily[d].total * 100) / 100 };
                 });
                 resolve({ rows: rows });
             } catch (e) {
@@ -1293,12 +1379,23 @@ var App = (function () {
 
         var IS_ANDROID = !!(window.Android && window.Android.isAndroid && window.Android.isAndroid());
 
-        // Android 端优先从 iFinD API 实时获取，失败则回退静态 JSON
+        // Android 端先复用持久快照，仅在数据日期落后时刷新末尾重叠区间。
         var dataPromise;
         if (IS_ANDROID && window.Android.fetchDateSequence) {
-            dataPromise = fetchChartDataFromAPI().catch(function (apiErr) {
-                console.warn("API 获取图表数据失败，回退静态 JSON:", apiErr);
-                return loadChartText("data/chart_data.json").then(function (text) { return JSON.parse(text); });
+            dataPromise = loadChartText("data/chart_data.json").then(function (text) {
+                var staticData = JSON.parse(text);
+                var base = mergeChartData(staticData, loadChartSnapshot());
+                var recentlyChecked = base._checkedAt && (now - base._checkedAt) < CHART_REFRESH_RETRY_MS;
+                if (!force && (chartDataIsCurrent(base) || recentlyChecked)) return base;
+                return fetchChartDataFromAPI(base).then(function (updated) {
+                    saveChartSnapshot(updated);
+                    return updated;
+                }).catch(function (apiErr) {
+                    console.warn("API 获取图表数据失败，使用本地快照:", apiErr);
+                    base._checkedAt = Date.now();
+                    saveChartSnapshot(base);
+                    return base;
+                });
             });
         } else {
             var primary = chartDataUrl();
@@ -1641,7 +1738,7 @@ var App = (function () {
         html += '<input type="text" id="customDisplay" placeholder="显示名（如：新能源）" style="flex:1;padding:7px 10px;border-radius:8px;border:1px solid #E5E5EA;font-size:12px;outline:none">';
         html += '</div>';
         html += '<div style="display:flex;gap:8px;margin-bottom:6px">';
-        html += '<input type="text" id="customIfind" placeholder="iFinD代码（如：399808.SZ）" style="flex:2;padding:7px 10px;border-radius:8px;border:1px solid #E5E5EA;font-size:12px;outline:none">';
+        html += '<input type="text" id="customIfind" placeholder="iFinD代码（如：930601 或 399808.SZ）" style="flex:2;padding:7px 10px;border-radius:8px;border:1px solid #E5E5EA;font-size:12px;outline:none">';
         html += '<select id="customGroup" style="flex:1;padding:7px 10px;border-radius:8px;border:1px solid #E5E5EA;font-size:12px;outline:none;background:#fff">';
         groups.forEach(function (g) {
             html += '<option value="' + g.k + '">' + g.l + '</option>';
@@ -1768,12 +1865,18 @@ var App = (function () {
     function addCustomIndex() {
         var name = (document.getElementById("customName").value || "").trim();
         var display = (document.getElementById("customDisplay").value || "").trim();
-        var ifind = (document.getElementById("customIfind").value || "").trim();
+        var ifind = AppConfig.normalizeIfindCode(
+            (document.getElementById("customIfind").value || "").trim()
+        );
         var group = document.getElementById("customGroup").value;
         var margin = document.getElementById("customMargin").checked;
 
         if (!name || !ifind) {
             showToast("请填写指数名称和iFinD代码");
+            return;
+        }
+        if (ifind.indexOf(".") < 0) {
+            showToast("无法判断市场，请补充代码后缀，如 .SH、.SZ、.CSI 或 .TI");
             return;
         }
         if (!display) display = name;

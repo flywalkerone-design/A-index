@@ -10,6 +10,8 @@ var Fetch = (function () {
     "use strict";
 
     var IS_ANDROID = !!(window.Android && window.Android.isAndroid());
+    var CACHE_TTL_MS = 5 * 60 * 1000;
+    var CACHE_OVERLAP_DAYS = 10;
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // localStorage 缓存
@@ -56,29 +58,48 @@ var Fetch = (function () {
         if (!oldData || !oldData.dates || !oldData.dates.length) return newData;
         if (!newData || !newData.dates || !newData.dates.length) return oldData;
         var out = {};
-        Object.keys(oldData).forEach(function (key) { out[key] = Array.isArray(oldData[key]) ? oldData[key].slice() : oldData[key]; });
-        for (var i = 0; i < newData.dates.length; i++) {
-            if (newData.dates[i] <= oldData.dates[oldData.dates.length - 1]) continue;
-            Object.keys(newData).forEach(function (key) {
-                if (Array.isArray(newData[key])) {
-                    if (!out[key]) out[key] = [];
-                    out[key].push(newData[key][i]);
-                }
+        var dateSet = {};
+        oldData.dates.forEach(function (date) { dateSet[date] = true; });
+        newData.dates.forEach(function (date) { dateSet[date] = true; });
+        var dates = Object.keys(dateSet).sort();
+        var arrayKeys = {};
+        Object.keys(oldData).forEach(function (key) {
+            if (key !== "dates" && Array.isArray(oldData[key])) arrayKeys[key] = true;
+            else if (!Array.isArray(oldData[key])) out[key] = oldData[key];
+        });
+        Object.keys(newData).forEach(function (key) {
+            if (key !== "dates" && Array.isArray(newData[key])) arrayKeys[key] = true;
+            else if (!Array.isArray(newData[key])) out[key] = newData[key];
+        });
+        out.dates = dates;
+        Object.keys(arrayKeys).forEach(function (key) {
+            var values = {};
+            if (Array.isArray(oldData[key])) {
+                oldData.dates.forEach(function (date, index) { values[date] = oldData[key][index]; });
+            }
+            if (Array.isArray(newData[key])) {
+                newData.dates.forEach(function (date, index) { values[date] = newData[key][index]; });
+            }
+            out[key] = dates.map(function (date) {
+                return Object.prototype.hasOwnProperty.call(values, date) ? values[date] : null;
             });
-        }
+        });
         return out;
     }
 
     function cachedRangeFetch(prefix, code, startDate, endDate, fetcher) {
         var key = cacheKey(prefix, code, startDate, endDate);
         var exact = getCached(key);
-        if (exact && exact.dates && exact.dates.length && exact.dates[exact.dates.length - 1] >= endDate) return Promise.resolve(exact);
-        var old = findCached(prefix, code, startDate);
-        if (old && old.dates[old.dates.length - 1] >= endDate) return Promise.resolve(old);
-        var requestStart = old && old.dates && old.dates.length ? addDays(old.dates[old.dates.length - 1], 1) : startDate;
+        if (exact && exact.dates && exact.dates.length && exact._cachedAt &&
+            Date.now() - exact._cachedAt < CACHE_TTL_MS) return Promise.resolve(exact);
+        var old = exact || findCached(prefix, code, startDate);
+        var requestStart = old && old.dates && old.dates.length
+            ? addDays(old.dates[old.dates.length - 1], -CACHE_OVERLAP_DAYS) : startDate;
+        if (requestStart < startDate) requestStart = startDate;
         return fetcher(requestStart, endDate).then(function (fresh) {
             if (!fresh || fresh.error || !fresh.dates || !fresh.dates.length) return fresh;
             var merged = mergeSeries(old, fresh);
+            merged._cachedAt = Date.now();
             setCache(key, merged);
             return merged;
         });
@@ -111,15 +132,16 @@ var Fetch = (function () {
      */
     function fetchIndexHistory(ifindCode, startDate, endDate) {
         // 检查缓存
-        var ck = cacheKey("hist3", ifindCode, startDate, endDate);
+        var ck = cacheKey("hist4", ifindCode, startDate, endDate);
         var cached = getCached(ck);
-        if (cached && cached.dates && cached.dates.length > 0) {
+        if (cached && cached.dates && cached.dates.length > 0 && cached._cachedAt &&
+            Date.now() - cached._cachedAt < CACHE_TTL_MS) {
             return Promise.resolve(cached);
         }
-        var previous = findCached("hist3", ifindCode, startDate);
-        if (previous && previous.dates[previous.dates.length - 1] >= endDate) return Promise.resolve(previous);
+        var previous = cached || findCached("hist4", ifindCode, startDate);
         var requestStart = previous && previous.dates.length
-            ? addDays(previous.dates[previous.dates.length - 1], 1) : startDate;
+            ? addDays(previous.dates[previous.dates.length - 1], -CACHE_OVERLAP_DAYS) : startDate;
+        if (requestStart < startDate) requestStart = startDate;
 
         if (IS_ANDROID) {
             return new Promise(function (resolve) {
@@ -143,7 +165,9 @@ var Fetch = (function () {
                     }
                     // 缓存结果
                     if (data.dates && data.dates.length > 0) {
-                        setCache(ck, mergeSeries(previous, data));
+                        data = mergeSeries(previous, data);
+                        data._cachedAt = Date.now();
+                        setCache(ck, data);
                     }
                     resolve(data);
                 } catch (e) {
@@ -156,7 +180,13 @@ var Fetch = (function () {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ code: ifindCode, start: requestStart, end: endDate }),
-            }).then(function (r) { return r.json(); });
+            }).then(function (r) { return r.json(); }).then(function (data) {
+                if (!data || data.error || !data.dates || !data.dates.length) return data;
+                var merged = mergeSeries(previous, data);
+                merged._cachedAt = Date.now();
+                setCache(ck, merged);
+                return merged;
+            });
         }
     }
 
@@ -171,15 +201,16 @@ var Fetch = (function () {
      * @returns {Promise<Object>} { dates, margin_balance }
      */
     function fetchMargin(ifindCode, startDate, endDate) {
-        var ck = cacheKey("margin", ifindCode, startDate, endDate);
+        var ck = cacheKey("margin2", ifindCode, startDate, endDate);
         var cached = getCached(ck);
-        if (cached && cached.dates && cached.dates.length > 0) {
+        if (cached && cached.dates && cached.dates.length > 0 && cached._cachedAt &&
+            Date.now() - cached._cachedAt < CACHE_TTL_MS) {
             return Promise.resolve(cached);
         }
-        var previous = findCached("margin", ifindCode, startDate);
-        if (previous && previous.dates[previous.dates.length - 1] >= endDate) return Promise.resolve(previous);
+        var previous = cached || findCached("margin2", ifindCode, startDate);
         var requestStart = previous && previous.dates.length
-            ? addDays(previous.dates[previous.dates.length - 1], 1) : startDate;
+            ? addDays(previous.dates[previous.dates.length - 1], -CACHE_OVERLAP_DAYS) : startDate;
+        if (requestStart < startDate) requestStart = startDate;
 
         if (IS_ANDROID) {
             return new Promise(function (resolve) {
@@ -191,7 +222,9 @@ var Fetch = (function () {
                         return;
                     }
                     if (data.dates && data.dates.length > 0) {
-                        setCache(ck, mergeSeries(previous, data));
+                        data = mergeSeries(previous, data);
+                        data._cachedAt = Date.now();
+                        setCache(ck, data);
                     }
                     resolve(data);
                 } catch (e) {
@@ -203,7 +236,13 @@ var Fetch = (function () {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ code: ifindCode, start: requestStart, end: endDate }),
-            }).then(function (r) { return r.json(); });
+            }).then(function (r) { return r.json(); }).then(function (data) {
+                if (!data || data.error || !data.dates || !data.dates.length) return data;
+                var merged = mergeSeries(previous, data);
+                merged._cachedAt = Date.now();
+                setCache(ck, merged);
+                return merged;
+            });
         }
     }
 
@@ -218,11 +257,13 @@ var Fetch = (function () {
      * @returns {Promise<Object>} { dates, turnover_ratio } 或 { dates: [], turnover_ratio: [] }
      */
     function fetchTurnoverRatio(ifindCode, startDate, endDate) {
-        if (IS_ANDROID) {
-            return new Promise(function (resolve) {
+        return cachedRangeFetch("turnover2", ifindCode, startDate, endDate,
+            function (requestStart, requestEnd) {
+                if (IS_ANDROID) {
+                    return new Promise(function (resolve) {
                 try {
                     var raw = Android.fetchDateSequence(
-                        ifindCode, "ths_turnover_ratio_index", startDate, endDate, null
+                        ifindCode, "ths_turnover_ratio_index", requestStart, requestEnd, null
                     );
                     var data = JSON.parse(raw);
                     if (data.error) {
@@ -254,14 +295,14 @@ var Fetch = (function () {
                 } catch (e) {
                     resolve({ dates: [], turnover_ratio: [] });
                 }
+                    });
+                }
+                return fetch(AppConfig.PROXY_BASE + "/api/proxy/turnover", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ code: ifindCode, start: requestStart, end: requestEnd }),
+                }).then(function (r) { return r.json(); });
             });
-        } else {
-            return fetch(AppConfig.PROXY_BASE + "/api/proxy/turnover", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ code: ifindCode, start: startDate, end: endDate }),
-            }).then(function (r) { return r.json(); });
-        }
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -275,11 +316,13 @@ var Fetch = (function () {
      * @returns {Promise<Object>} { dates, rsi } 或 { dates: [], rsi: [] }
      */
     function fetchRSI(ifindCode, startDate, endDate) {
-        if (IS_ANDROID) {
-            return new Promise(function (resolve) {
+        return cachedRangeFetch("rsi2", ifindCode, startDate, endDate,
+            function (requestStart, requestEnd) {
+                if (IS_ANDROID) {
+                    return new Promise(function (resolve) {
                 try {
                     var raw = Android.fetchDateSequence(
-                        ifindCode, "ths_rsi_index", startDate, endDate,
+                        ifindCode, "ths_rsi_index", requestStart, requestEnd,
                         JSON.stringify(["6", "100"])
                     );
                     var data = JSON.parse(raw);
@@ -313,14 +356,14 @@ var Fetch = (function () {
                 } catch (e) {
                     resolve({ dates: [], rsi: [] });
                 }
+                    });
+                }
+                return fetch(AppConfig.PROXY_BASE + "/api/proxy/rsi", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ code: ifindCode, start: requestStart, end: requestEnd }),
+                }).then(function (r) { return r.json(); });
             });
-        } else {
-            return fetch(AppConfig.PROXY_BASE + "/api/proxy/rsi", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ code: ifindCode, start: startDate, end: endDate }),
-            }).then(function (r) { return r.json(); });
-        }
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -455,14 +498,31 @@ var Fetch = (function () {
             marginMap[marginDates[i]] = marginValues[i];
         }
         var aligned = new Array(tradeDates.length).fill(null);
-        var lastKnown = null;
         for (var i = 0; i < tradeDates.length; i++) {
-            if (marginMap[tradeDates[i]] !== undefined && marginMap[tradeDates[i]] !== null && !isNaN(marginMap[tradeDates[i]])) {
-                lastKnown = marginMap[tradeDates[i]];
+            var value = marginMap[tradeDates[i]];
+            if (value !== undefined && value !== null && !isNaN(value)) {
+                aligned[i] = value;
             }
-            aligned[i] = lastKnown;
         }
-        return aligned;
+        return rejectMarginOutliers(aligned);
+    }
+
+    function rejectMarginOutliers(values) {
+        var cleaned = values.slice();
+        for (var i = 1; i < values.length; i++) {
+            var previous = values[i - 1];
+            var current = values[i];
+            if (previous === null || current === null || previous === 0) continue;
+            if (Math.abs(current / previous - 1) <= 0.2) continue;
+            var next = null;
+            for (var j = i + 1; j < values.length; j++) {
+                if (values[j] !== null && !isNaN(values[j])) { next = values[j]; break; }
+            }
+            if (next === null || Math.abs(next / previous - 1) < 0.1) {
+                cleaned[i] = null;
+            }
+        }
+        return cleaned;
     }
 
     function alignRSIData(tradeDates, rsiDates, rsiValues) {
@@ -493,14 +553,14 @@ var Fetch = (function () {
     function fetchAndCalculate(idxConfig, startDate, endDate) {
         return fetchRawData(idxConfig, startDate, endDate)
             .then(function (raw) {
-                if (!raw) return null;
+                if (!raw || !validateRawData(raw)) return null;
 
-                // 融资余额未更新时，截止到最近一个有效融资交易日之后一天。
-                // 如果勾了 margin 但 iFinD 没返回融资数据，降级为无融资模式
-                var filtered = raw;
-                var useMargin = idxConfig.margin && filtered.margin_balance &&
-                    countNotNull(filtered.margin_balance) >= 1;
+                // 先剔除尚未完成 T+1 披露的市场日期，再按真实融资日期收口。
+                var filtered = filterByDate(raw, stableCutoffDate());
+                if (!filtered) return null;
+                var useMargin = !!idxConfig.margin;
                 if (useMargin) {
+                    if (!filtered.margin_balance || countNotNull(filtered.margin_balance) < 2) return null;
                     var lastMarginIdx = -1;
                     for (var i = filtered.margin_balance.length - 1; i >= 0; i--) {
                         if (filtered.margin_balance[i] !== null && !isNaN(filtered.margin_balance[i])) {
@@ -508,14 +568,8 @@ var Fetch = (function () {
                             break;
                         }
                     }
-                    if (lastMarginIdx < 0) {
-                        useMargin = false;
-                        filtered = filterByDate(raw, formatDate(new Date()));
-                    } else {
-                        filtered = filterByDate(raw, addDays(filtered.dates[lastMarginIdx], 1));
-                    }
-                } else {
-                    filtered = filterByDate(raw, formatDate(new Date()));
+                    if (lastMarginIdx < 0) return null;
+                    filtered = filterByDate(filtered, addDays(filtered.dates[lastMarginIdx], 1));
                 }
                 if (!filtered || filtered.dates.length === 0) return null;
 
@@ -541,6 +595,28 @@ var Fetch = (function () {
 
                 return data;
             });
+    }
+
+    function validateRawData(raw) {
+        if (!raw.dates || raw.dates.length < 2) return false;
+        var length = raw.dates.length;
+        var required = [raw.close, raw.amount, raw.turnover_ratio, raw.pe];
+        for (var i = 0; i < required.length; i++) {
+            if (!Array.isArray(required[i]) || required[i].length !== length) return false;
+        }
+        for (var j = 0; j < length; j++) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(raw.dates[j])) return false;
+            if (j > 0 && raw.dates[j] <= raw.dates[j - 1]) return false;
+        }
+        return true;
+    }
+
+    function stableCutoffDate() {
+        var date = new Date();
+        var day = date.getDay();
+        if (day === 6) date.setDate(date.getDate() - 1);
+        else if (day === 0) date.setDate(date.getDate() - 2);
+        return formatDate(date);
     }
 
     function filterByDate(data, cutoffDate) {

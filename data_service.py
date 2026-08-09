@@ -17,11 +17,33 @@ from utils.ifind_data import (
     _ensure_token,
     fetch_index_history_ifind,
     fetch_margin_ifind,
+    fetch_rsi_ifind,
+    fetch_turnover_ifind,
 )
 from utils.indicators import calc_all_indicators
 from utils.scoring import calc_market_temperature
 
 TOKEN_FILE = APP_DIR / "ifind_token.txt"
+
+
+def _reject_margin_outliers(series):
+    """将未被下一交易日确认的单日 20% 跳变标记为空值。"""
+    values = pd.to_numeric(series, errors="coerce").tolist()
+    cleaned = values.copy()
+    for index in range(1, len(values)):
+        previous = values[index - 1]
+        current = values[index]
+        if pd.isna(previous) or pd.isna(current) or previous == 0:
+            continue
+        if abs(current / previous - 1) <= 0.2:
+            continue
+        next_value = next(
+            (value for value in values[index + 1:] if not pd.isna(value)),
+            None,
+        )
+        if next_value is None or abs(next_value / previous - 1) < 0.1:
+            cleaned[index] = np.nan
+    return pd.Series(cleaned, index=series.index)
 
 
 def _emotion(score):
@@ -86,16 +108,37 @@ def fetch_single_index(idx_config, start_date, end_date):
     if df.empty:
         return None
 
+    try:
+        turnover_df = fetch_turnover_ifind(ifind_code, start_date, end_date)
+        if turnover_df is None or turnover_df.empty:
+            return None
+        df = df.drop(columns=["turnover_ratio"], errors="ignore").merge(
+            turnover_df, on="date", how="left"
+        )
+    except Exception:
+        return None
+
+    try:
+        rsi_df = fetch_rsi_ifind(ifind_code, start_date, end_date)
+        if rsi_df is not None and not rsi_df.empty:
+            rsi_df = rsi_df.rename(columns={"rsi": "rsi_ifind"})
+            df = df.merge(rsi_df, on="date", how="left")
+    except Exception:
+        pass
+
     if use_margin:
         try:
             margin_df = fetch_margin_ifind(ifind_code, start_date, end_date)
             if margin_df is None or margin_df.empty:
                 return None
             df = df.merge(margin_df, on="date", how="left")
+            df["margin_balance"] = _reject_margin_outliers(df["margin_balance"])
         except Exception:
             return None
 
-    if "margin_balance" not in df.columns:
+    if "pe" in df.columns:
+        df["pe"] = df["pe"].ffill()
+    if use_margin and "margin_balance" not in df.columns:
         return None
 
     if use_margin:
@@ -126,6 +169,7 @@ def fetch_all_data():
 
     indices = []
     errors = []
+    data_dates = []
 
     for idx_cfg in INDEXES:
         code = idx_cfg["code"]
@@ -137,8 +181,10 @@ def fetch_all_data():
 
             valid = df[df["data_ok"]] if "data_ok" in df.columns else df
             if valid.empty:
-                valid = df
+                errors.append(f"{code}: 无完整因子数据")
+                continue
             latest = valid.iloc[-1]
+            latest_date = latest["date"].strftime("%Y-%m-%d")
 
             score = round(float(latest["market_score_low_freq"]) * 100)
             state_name, state_color = _get_state(score)
@@ -160,6 +206,7 @@ def fetch_all_data():
 
             indices.append({
                 "code": code,
+                "date": latest_date,
                 "display": idx_cfg.get("display_name", idx_cfg["name"]),
                 "group": idx_cfg["group"],
                 "score": score,
@@ -180,11 +227,13 @@ def fetch_all_data():
                 "scores": scores,
                 "closes": closes,
             })
+            data_dates.append(latest_date)
         except Exception as e:
             errors.append(f"{code}: {e}")
 
     return {
-        "date": datetime.now().strftime("%Y-%m-%d"),
+        # 首页代表所有指数都可用的共同日期，不能使用系统日期冒充数据日期。
+        "date": min(data_dates) if data_dates else "",
         "indices": indices,
         "errors": errors,
         "fetchTime": datetime.now().strftime("%H:%M:%S"),

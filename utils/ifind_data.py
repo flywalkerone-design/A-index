@@ -62,12 +62,17 @@ def _headers() -> dict:
 # 2. 融资余额（EDB）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _MARGIN_CACHE = {}
+_MARGIN_CACHE_SCHEMA = 2
 _CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "ifind_margin_cache"
+
+
+def _margin_cache_path(code: str) -> Path:
+    return _CACHE_DIR / f"{code}.v{_MARGIN_CACHE_SCHEMA}.csv"
 
 
 def _load_from_disk(code: str) -> pd.DataFrame:
     """从磁盘缓存加载"""
-    fp = _CACHE_DIR / f"{code}.csv"
+    fp = _margin_cache_path(code)
     if not fp.exists():
         return None
     try:
@@ -81,11 +86,35 @@ def _load_from_disk(code: str) -> pd.DataFrame:
 def _save_to_disk(code: str, df: pd.DataFrame):
     """保存到磁盘缓存"""
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    fp = _CACHE_DIR / f"{code}.csv"
+    fp = _margin_cache_path(code)
     df.to_csv(fp, index=False)
 
 
-def _fetch_chunk(code: str, startdate: str, enddate: str) -> list:
+def _parse_date_sequence(item: dict, indicator: str, value_column: str) -> pd.DataFrame:
+    """严格按 API time 数组解析 date_sequence，拒绝长度不一致的数据。"""
+    times = item.get("time", [])
+    values = item.get("table", {}).get(indicator, [])
+    if not times or not values or len(times) != len(values):
+        if times or values:
+            log.warning(
+                f"iFinD {indicator} 日期和值长度不一致: "
+                f"time={len(times)}, values={len(values)}"
+            )
+        return pd.DataFrame(columns=["date", value_column])
+
+    df = pd.DataFrame({
+        "date": pd.to_datetime(times, errors="coerce"),
+        value_column: pd.to_numeric(pd.Series(values), errors="coerce"),
+    })
+    return (
+        df.dropna(subset=["date"])
+        .drop_duplicates(subset="date", keep="last")
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+
+
+def _fetch_chunk(code: str, startdate: str, enddate: str) -> pd.DataFrame:
     """单次请求 iFinD EDB"""
     para = {
         "codes": code,
@@ -105,11 +134,13 @@ def _fetch_chunk(code: str, startdate: str, enddate: str) -> list:
     )
     r = resp.json()
     if r.get("errorcode") != 0:
-        return []
+        return pd.DataFrame(columns=["date", "margin_balance"])
     tables = r.get("tables", [])
     if not tables:
-        return []
-    return tables[0].get("table", {}).get("ths_margin_trading_balance_index", [])
+        return pd.DataFrame(columns=["date", "margin_balance"])
+    return _parse_date_sequence(
+        tables[0], "ths_margin_trading_balance_index", "margin_balance"
+    )
 
 
 def fetch_margin_ifind(code: str, startdate: str, enddate: str) -> pd.DataFrame:
@@ -127,40 +158,31 @@ def fetch_margin_ifind(code: str, startdate: str, enddate: str) -> pd.DataFrame:
     from datetime import datetime, timedelta
 
     def _download_range(fetch_start: str, fetch_end: str) -> pd.DataFrame:
-        """按区间下载融资余额，保持原有日期生成逻辑。"""
+        """按区间下载融资余额，使用 iFinD 返回的真实交易日。"""
         log.info(f"iFinD 获取 {code} 融资余额 ({fetch_start} ~ {fetch_end})...")
         t0 = time.time()
 
         start = datetime.strptime(fetch_start, "%Y-%m-%d")
         end = datetime.strptime(fetch_end, "%Y-%m-%d")
 
-        all_vals = []
+        parts = []
         chunk_start = start
         while chunk_start <= end:
             chunk_end = min(chunk_start + timedelta(days=550), end)
-            vals = _fetch_chunk(code, chunk_start.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d"))
-            if not vals:
-                break
-            all_vals.extend(vals)
-            if len(vals) < 10:
-                break
-            chunk_start = chunk_start + timedelta(days=len(vals))
+            part = _fetch_chunk(
+                code,
+                chunk_start.strftime("%Y-%m-%d"),
+                chunk_end.strftime("%Y-%m-%d"),
+            )
+            if not part.empty:
+                parts.append(part)
+            chunk_start = chunk_end + timedelta(days=1)
 
-        if not all_vals:
+        if not parts:
             return pd.DataFrame(columns=["date", "margin_balance"])
 
-        dates = []
-        d = start
-        while d <= end:
-            dates.append(d)
-            d += timedelta(days=1)
-
-        n = min(len(dates), len(all_vals))
-        new_df = pd.DataFrame({
-            "date": dates[:n],
-            "margin_balance": [float(v) if v is not None else float("nan") for v in all_vals[:n]],
-        })
-        new_df = new_df.drop_duplicates(subset="date", keep="last").reset_index(drop=True)
+        new_df = pd.concat(parts, ignore_index=True)
+        new_df = new_df.drop_duplicates(subset="date", keep="last").sort_values("date").reset_index(drop=True)
 
         elapsed = time.time() - t0
         log.info(f"  新增 {len(new_df)} 条 ({elapsed:.1f}s)")
@@ -180,7 +202,8 @@ def fetch_margin_ifind(code: str, startdate: str, enddate: str) -> pd.DataFrame:
         if requested_start < first_cached:
             fetch_ranges.append((requested_start, first_cached - timedelta(days=1)))
         if last_cached < requested_end:
-            fetch_ranges.append((last_cached + timedelta(days=1), requested_end))
+            refresh_start = max(requested_start, last_cached - timedelta(days=10))
+            fetch_ranges.append((refresh_start, requested_end))
     else:
         fetch_ranges.append((requested_start, requested_end))
 
@@ -276,7 +299,22 @@ def _fetch_history_chunk(code: str, startdate: str, enddate: str) -> pd.DataFram
         return pd.DataFrame()
 
     df = pd.DataFrame({"date": pd.to_datetime(times)})
+    required = {"close", "amount", "pe_ttm_index"}
+    missing = required.difference(table)
+    if missing:
+        log.warning(f"iFinD 历史行情缺少关键字段 {code}: {sorted(missing)}")
+        return pd.DataFrame()
     for col, values in table.items():
+        if not isinstance(values, list):
+            continue
+        if len(values) != len(times):
+            if col in required:
+                log.warning(
+                    f"iFinD 历史行情字段长度不一致 {code} {col}: "
+                    f"time={len(times)}, values={len(values)}"
+                )
+                return pd.DataFrame()
+            continue
         df[col] = values
     return df
 
@@ -316,7 +354,8 @@ def fetch_index_history_ifind(code: str, startdate: str, enddate: str) -> pd.Dat
         if requested_start < first_cached:
             fetch_ranges.append((requested_start, first_cached - timedelta(days=1)))
         if last_cached < requested_end:
-            fetch_ranges.append((last_cached + timedelta(days=1), requested_end))
+            refresh_start = max(requested_start, last_cached - timedelta(days=10))
+            fetch_ranges.append((refresh_start, requested_end))
     else:
         fetch_ranges.append((requested_start, requested_end))
 
@@ -434,32 +473,10 @@ def fetch_rsi_ifind(code: str, startdate: str, enddate: str) -> pd.DataFrame:
         if not tables:
             return pd.DataFrame(columns=["date", "rsi"])
 
-        item = tables[0]
-        times = item.get("time", [])
-        vals = item.get("table", {}).get("ths_rsi_index", [])
-        if not times or not vals:
-            return pd.DataFrame(columns=["date", "rsi"])
-
-        # 检查是否有有效值（非 None、非 "null" 字符串）
-        parsed = []
-        for v in vals:
-            if v is None or v == "null" or (isinstance(v, str) and v.strip() == ""):
-                parsed.append(float("nan"))
-            else:
-                try:
-                    parsed.append(float(v))
-                except (TypeError, ValueError):
-                    parsed.append(float("nan"))
-
-        has_valid = any(not pd.isna(v) for v in parsed)
-        if not has_valid:
+        df = _parse_date_sequence(tables[0], "ths_rsi_index", "rsi")
+        if df.empty or not df["rsi"].notna().any():
             log.info(f"iFinD RSI 对 {code} 无有效数据（可能不支持该指标）")
             return pd.DataFrame(columns=["date", "rsi"])
-
-        df = pd.DataFrame({
-            "date": pd.to_datetime(times),
-            "rsi": parsed,
-        })
         return df
     except Exception as e:
         log.warning(f"iFinD RSI 获取异常 {code}: {e}")
@@ -504,31 +521,12 @@ def fetch_turnover_ifind(code: str, startdate: str, enddate: str) -> pd.DataFram
         if not tables:
             return pd.DataFrame(columns=["date", "turnover_ratio"])
 
-        item = tables[0]
-        times = item.get("time", [])
-        vals = item.get("table", {}).get("ths_turnover_ratio_index", [])
-        if not times or not vals:
-            return pd.DataFrame(columns=["date", "turnover_ratio"])
-
-        parsed = []
-        for v in vals:
-            if v is None or v == "null" or (isinstance(v, str) and v.strip() == ""):
-                parsed.append(float("nan"))
-            else:
-                try:
-                    parsed.append(float(v))
-                except (TypeError, ValueError):
-                    parsed.append(float("nan"))
-
-        has_valid = any(not pd.isna(v) for v in parsed)
-        if not has_valid:
+        df = _parse_date_sequence(
+            tables[0], "ths_turnover_ratio_index", "turnover_ratio"
+        )
+        if df.empty or not df["turnover_ratio"].notna().any():
             log.info(f"iFinD 换手率对 {code} 无有效数据")
             return pd.DataFrame(columns=["date", "turnover_ratio"])
-
-        df = pd.DataFrame({
-            "date": pd.to_datetime(times),
-            "turnover_ratio": parsed,
-        })
         return df
     except Exception as e:
         log.warning(f"iFinD 换手率获取异常 {code}: {e}")

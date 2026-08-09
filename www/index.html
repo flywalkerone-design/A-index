@@ -465,7 +465,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
                 </section>
                 <section class="data-section" id="dataSection-margin">
                     <h3>融资余额与当前回撤<button class="chart-view-btn" onclick="App.toggleChartLandscape('margin')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom('margin')" title="重置缩放" aria-label="重置缩放">⟲</button></h3>
-                    <p>当前回撤 = 阶段最大融资余额 - 当日融资余额。净买入优先使用 iFinD 融资买入额-偿还额口径。</p>
+                    <p>当前回撤 = 阶段最大融资余额 - 当日融资余额。净买入直接采用 iFinD 市场交易统计专用口径。</p>
                     <div class="data-chart"><canvas id="marginChart"></canvas></div>
                 </section>
                 <section class="data-section" id="dataSection-marginFlow">
@@ -499,8 +499,8 @@ body{touch-action:pan-y;overscroll-behavior:none}
     <div class="settings-overlay" id="settingsOverlay" onclick="App.closeSettings(event)">
         <div class="settings-sheet" onclick="event.stopPropagation()">
             <button class="s-close" onclick="App.closeSettings()">✕</button>
-            <h3>指数管理</h3>
-            <div style="font-size:11px;color:#86868B;margin:-4px 0 10px">勾选指数以在海报中显示</div>
+            <h3>海报指数</h3>
+            <div style="font-size:11px;color:#86868B;margin:-4px 0 10px">仅控制海报分享内容，“全部”页始终显示所有指数</div>
             <div id="settingsBody"></div>
             <div class="s-actions">
                 <button class="s-save" onclick="App.saveCfg()">💾 保存</button>
@@ -537,11 +537,11 @@ body{touch-action:pan-y;overscroll-behavior:none}
 <!-- end phone-wrapper -->
 
 <!-- 加载 JS 模块 -->
-<script src="js/config.js?v=20260805-3"></script>
-<script src="js/indicators.js?v=20260805-3"></script>
-<script src="js/scoring.js?v=20260805-3"></script>
-<script src="js/fetch.js?v=20260805-3"></script>
-<script src="js/app.js?v=20260805-3"></script>
+<script src="js/config.js?v=20260809-2"></script>
+<script src="js/indicators.js?v=20260809-2"></script>
+<script src="js/scoring.js?v=20260809-2"></script>
+<script src="js/fetch.js?v=20260809-2"></script>
+<script src="js/app.js?v=20260809-2"></script>
 
 <script>
 // 初始化

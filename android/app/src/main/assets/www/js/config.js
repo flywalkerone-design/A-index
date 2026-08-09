@@ -43,7 +43,7 @@ var AppConfig = (function () {
         { code: "881145", ifind: "881145.TI", name: "电力", display: "电力", group: "sector", margin: true },
         // SmartBeta
         { code: "H30269", ifind: "H30269.CSI", name: "红利低波", display: "红利低波", group: "smartbeta", margin: true },
-        { code: "980092", ifind: "980092.SZ", name: "自由现金流", display: "自由现金流", group: "smartbeta", margin: true },
+        { code: "931752", ifind: "931752.CSI", name: "中证自由现金流", display: "自由现金流", group: "smartbeta", margin: true },
         { code: "883418", ifind: "883418.TI", name: "微盘股", display: "微盘股", group: "smartbeta", margin: true },
     ];
 
@@ -78,10 +78,33 @@ var AppConfig = (function () {
     // ━━━ 自定义指数（localStorage 持久化）━━━
     var CUSTOM_SK = "a_stock_custom_indexes_v1";
 
+    function normalizeIfindCode(value) {
+        var code = String(value || "").trim().toUpperCase();
+        if (!code || code.indexOf(".") >= 0) return code;
+        if (/^93\d{4}$/.test(code) || /^H\d{5}$/.test(code)) return code + ".CSI";
+        if (/^399\d{3}$/.test(code) || /^159\d{3}$/.test(code)) return code + ".SZ";
+        if (/^88\d{4}$/.test(code)) return code + ".TI";
+        if (/^899\d{3}$/.test(code)) return code + ".BJ";
+        if (/^[56]\d{5}$/.test(code) || /^95\d{4}$/.test(code)) return code + ".SH";
+        return code;
+    }
+
     function getCustomIndexes() {
         try {
             var s = localStorage.getItem(CUSTOM_SK);
-            if (s) return JSON.parse(s);
+            if (s) {
+                var indexes = JSON.parse(s);
+                var changed = false;
+                indexes.forEach(function (index) {
+                    var normalized = normalizeIfindCode(index.ifind);
+                    if (normalized !== index.ifind) {
+                        index.ifind = normalized;
+                        changed = true;
+                    }
+                });
+                if (changed) localStorage.setItem(CUSTOM_SK, JSON.stringify(indexes));
+                return indexes;
+            }
         } catch (e) { /* ignore */ }
         return [];
     }
@@ -137,6 +160,7 @@ var AppConfig = (function () {
         CUSTOM_SK: CUSTOM_SK,
         getCustomIndexes: getCustomIndexes,
         saveCustomIndexes: saveCustomIndexes,
+        normalizeIfindCode: normalizeIfindCode,
         getAllIndexes: getAllIndexes,
         RSI_PERIOD: RSI_PERIOD,
         PERCENTRANK_WINDOW: PERCENTRANK_WINDOW,

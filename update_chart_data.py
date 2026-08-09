@@ -2,7 +2,7 @@
 
 数据来源：iFinD 量化 API（主），Excel 文件（降级备用）
   - market: 上证指数日成交额 + 20日均线
-  - margin: 沪深两市融资余额合计 (000001.SH + 399107.SZ)
+  - margin: 沪深两市融资统计报表 (p03438，含专用净买入字段)
   - etf:    11只宽基ETF净流入合计 (ths_netcashflow_fund)
 
 使用方法：
