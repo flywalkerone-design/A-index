@@ -7,11 +7,12 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.stocktemp.app3"
+        // 0815 is a separately installable frozen snapshot and must coexist with older APKs.
+        applicationId = "com.stocktemp.app.v0815"
         minSdk = 24
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.7.1"
+        versionCode = 815
+        versionName = "0815"
     }
 
     signingConfigs {

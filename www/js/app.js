@@ -30,6 +30,9 @@ var App = (function () {
     var SELECTED_DATE = null;  // 日期回溯：选中的日期，null=最新
     var DATA_CACHE_KEY = "a_stock_data_snapshot_v6";
     var REFRESH_IN_PROGRESS = false;
+    var IS_FROZEN_BUILD = !!(window.Android && window.Android.isFrozenBuild && window.Android.isFrozenBuild());
+    var FROZEN_DATA_ASSET = "data/frozen_data_0815.json";
+    var FROZEN_DATA_LOADED = false;
     var HAMMER_MANAGERS = [];  // chartjs-plugin-zoom 两指平移用的 Hammer 实例
 
     // ━━━ 配置管理 ━━━
@@ -217,6 +220,57 @@ var App = (function () {
         }
     }
 
+    function frozenItemToData(item) {
+        var dates = Array.isArray(item.dates) ? item.dates.slice() : [];
+        var scores = Array.isArray(item.scores) ? item.scores.slice() : [];
+        var closes = Array.isArray(item.closes) ? item.closes.slice() : [];
+        var validIdx = scores.length - 1;
+        while (validIdx >= 0 && (scores[validIdx] === null || scores[validIdx] === undefined)) validIdx--;
+        var startIdx = Math.max(0, dates.length - 180);
+        return {
+            code: item.code,
+            display: item.display,
+            group: item.group,
+            score: item.score,
+            state: item.state,
+            stateColor: item.stateColor,
+            emotion: item.emotion,
+            emotionColor: item.emotionColor,
+            close: item.close,
+            ret: item.ret,
+            rsi: item.rsi,
+            pe: item.pe,
+            amount: item.amount,
+            ma5: item.ma5,
+            ma20: item.ma20,
+            ma60: item.ma60,
+            ranks: item.ranks || {},
+            factorRanks: {},
+            validIdx: validIdx,
+            allDates: dates,
+            allScores: scores,
+            allCloses: closes,
+            allRet: dates.map(function () { return null; }),
+            dates: dates.slice(startIdx),
+            scores: scores.slice(startIdx),
+            closes: closes.slice(startIdx),
+        };
+    }
+
+    function loadFrozenSnapshot() {
+        return loadChartText(FROZEN_DATA_ASSET).then(function (text) {
+            var snapshot = JSON.parse(text);
+            var next = {};
+            (snapshot.indices || []).forEach(function (item) {
+                if (item && item.code) next[item.code] = frozenItemToData(item);
+            });
+            if (!Object.keys(next).length) throw new Error("0815 封存快照为空");
+            DATA = next;
+            FROZEN_DATA_LOADED = true;
+            return snapshot;
+        });
+    }
+
     function saveDataSnapshot() {
         if (!Object.keys(DATA).length) return;
         try {
@@ -243,6 +297,20 @@ var App = (function () {
 
     function fetchLocal(force) {
         force = !!force;
+        if (IS_FROZEN_BUILD) {
+            if (FROZEN_DATA_LOADED) {
+                renderCachedData();
+                return;
+            }
+            loadFrozenSnapshot().then(function () {
+                renderCachedData();
+            }).catch(function (error) {
+                showLoading(false);
+                showToast("0815 封存数据加载失败");
+                console.error(error);
+            });
+            return;
+        }
         var hasData = Object.keys(DATA).length > 0;
         var latest = hasData ? latestDataDateStr() : "";
         var current = getLatestTradeDate();
@@ -1381,7 +1449,11 @@ var App = (function () {
 
         // Android 端先复用持久快照，仅在数据日期落后时刷新末尾重叠区间。
         var dataPromise;
-        if (IS_ANDROID && window.Android.fetchDateSequence) {
+        if (IS_FROZEN_BUILD) {
+            dataPromise = loadChartText("data/chart_data.json").then(function (text) {
+                return JSON.parse(text);
+            });
+        } else if (IS_ANDROID && window.Android.fetchDateSequence) {
             dataPromise = loadChartText("data/chart_data.json").then(function (text) {
                 var staticData = JSON.parse(text);
                 var base = mergeChartData(staticData, loadChartSnapshot());
@@ -2299,7 +2371,7 @@ var App = (function () {
         tickClock();
         setInterval(tickClock, 30000);
         ensurePosterLayout();
-        loadDataSnapshot();
+        if (!IS_FROZEN_BUILD) loadDataSnapshot();
         fetchLocal(false);
     }
 
@@ -2326,6 +2398,10 @@ var App = (function () {
         toggleChartLandscape: toggleChartLandscape,
         fetchLocal: fetchLocal,
         refreshData: function () {
+            if (IS_FROZEN_BUILD) {
+                showToast("当前为 0815 封存版，不会重新抓取数据");
+                return;
+            }
             showToast("正在刷新市场数据...");
             fetchLocal(true);
         },

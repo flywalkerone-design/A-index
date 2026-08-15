@@ -35,7 +35,7 @@ jobs:
         run: |
           rm -rf android/app/src/main/assets/www
           mkdir -p android/app/src/main/assets/www
-          cp -r www/* android/app/src/main/assets/www/
+          cp -r www/. android/app/src/main/assets/www/
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
           echo "=== assets/www/js/vendor ===" && ls android/app/src/main/assets/www/js/vendor
 
@@ -52,7 +52,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: A-Stock-Thermometer-${{ github.run_number }}
+          name: index-crowding-0815
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
           if-no-files-found: error

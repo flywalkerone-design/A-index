@@ -220,6 +220,11 @@ public class MainActivity extends AppCompatActivity {
             return true;
         }
 
+        @JavascriptInterface
+        public boolean isFrozenBuild() {
+            return true;
+        }
+
         /**
          * 读取 assets 下的文本文件并返回内容（用于 file:// 页面加载本地 JSON）。
          * 因为 Android WebView 的 fetch() 不支持 file:// 协议，数据 Tab 通过此桥读取 chart_data.json。
