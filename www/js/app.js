@@ -297,8 +297,11 @@ var App = (function () {
 
     function fetchLocal(force) {
         force = !!force;
-        if (IS_FROZEN_BUILD) {
-            if (FROZEN_DATA_LOADED) {
+        // The bundled 0815 snapshot avoids API calls on first launch and on
+        // ordinary app opens. A user-requested refresh still uses the normal
+        // incremental data pipeline.
+        if (IS_FROZEN_BUILD && !force) {
+            if (Object.keys(DATA).length) {
                 renderCachedData();
                 return;
             }
@@ -1449,7 +1452,7 @@ var App = (function () {
 
         // Android 端先复用持久快照，仅在数据日期落后时刷新末尾重叠区间。
         var dataPromise;
-        if (IS_FROZEN_BUILD) {
+        if (IS_FROZEN_BUILD && !force) {
             dataPromise = loadChartText("data/chart_data.json").then(function (text) {
                 return JSON.parse(text);
             });
@@ -2371,7 +2374,9 @@ var App = (function () {
         tickClock();
         setInterval(tickClock, 30000);
         ensurePosterLayout();
-        if (!IS_FROZEN_BUILD) loadDataSnapshot();
+        // Keep any user-refreshed snapshot on subsequent launches. The bundled
+        // snapshot is used only when this app installation has no local data.
+        loadDataSnapshot();
         fetchLocal(false);
     }
 
@@ -2398,10 +2403,6 @@ var App = (function () {
         toggleChartLandscape: toggleChartLandscape,
         fetchLocal: fetchLocal,
         refreshData: function () {
-            if (IS_FROZEN_BUILD) {
-                showToast("当前为 0815 封存版，不会重新抓取数据");
-                return;
-            }
             showToast("正在刷新市场数据...");
             fetchLocal(true);
         },
