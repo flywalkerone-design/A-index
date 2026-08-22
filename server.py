@@ -29,6 +29,37 @@ def index():
     return send_file(APP_DIR / "www" / "index.html")
 
 
+# 冻结版浏览器预览：注入 window.Android stub，让 App 走内置 frozen_data 快照，
+# 无需 iFinD token 即可预览（数据 Tab 图表、因子表、海报等）。
+_PREVIEW_STUB = """<script>
+window.Android = {
+    isAndroid: function () { return true; },
+    isFrozenBuild: function () { return true; },
+    hasRefreshToken: function () { return false; },
+    setLandscape: function () {},
+    setRefreshToken: function () {},
+    fetchIndexHistory: function () { return '{"error":"NO_TOKEN"}'; },
+    fetchMargin: function () { return '{"error":"NO_TOKEN"}'; },
+    fetchMarginMarketStats: function () { return '{"error":"NO_TOKEN"}'; },
+    fetchDateSequence: function () { return '{"error":"NO_TOKEN"}'; },
+    checkToken: function () { return '{"valid":false,"error":"preview"}'; },
+    // 不提供 saveImage：让浏览器走原生 canvas.toBlob 下载，便于预览时保存海报
+    showToast: function (m) { console.log("[toast]", m); }
+};
+</script>
+"""
+
+
+@app.route("/preview")
+def preview():
+    """冻结版预览页（注入 window.Android 冻结 stub）"""
+    html = (APP_DIR / "www" / "index.html").read_text(encoding="utf-8")
+    marker = '<script src="js/config.js'
+    if marker in html:
+        html = html.replace(marker, _PREVIEW_STUB + marker, 1)
+    return html
+
+
 @app.route("/js/<path:filename>")
 def serve_js(filename):
     return send_file(APP_DIR / "www" / "js" / filename)
