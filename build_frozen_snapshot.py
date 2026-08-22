@@ -97,7 +97,7 @@ def main():
     original_post = ifind_data._post
     ifind_data._post = reject_network
     try:
-        indices = []
+        frames = []  # (config, frame)
         errors = []
         for config in INDEXES:
             try:
@@ -114,7 +114,7 @@ def main():
                 frame = fetch_single_index(config, local_start, args.as_of)
                 if frame is None or frame.empty:
                     raise ValueError("no cached data")
-                indices.append(serialize_index(frame, config))
+                frames.append((config, frame))
             except Exception as exc:
                 errors.append(f"{config['code']}: {exc}")
     finally:
@@ -122,6 +122,25 @@ def main():
 
     if errors:
         raise RuntimeError("offline snapshot incomplete: " + "; ".join(errors))
+
+    # ━━ 全局统一数据截止日 ━━
+    # 温度计核心逻辑：温度只在所有因子（含融资余额）都齐全的日期计算。
+    # 融资余额 T+1 公布，各指数最后一个完整数据日可能不同。全局统一显示到
+    # 「所有指数都有完整数据」的最后一天，避免部分指数展示填充出来的最新日。
+    last_valids = []
+    for _cfg, frame in frames:
+        valid = frame[frame["data_ok"]]
+        if not valid.empty:
+            last_valids.append(valid["date"].max())
+    global_cutoff = min(last_valids) if last_valids else None
+    if global_cutoff is not None:
+        frames = [
+            (cfg, frame[frame["date"] <= global_cutoff].copy())
+            for cfg, frame in frames
+        ]
+        print(f"global data cutoff: {global_cutoff.strftime('%Y-%m-%d')}")
+
+    indices = [serialize_index(frame, config) for config, frame in frames]
 
     result = {
         "snapshot_date": args.as_of,

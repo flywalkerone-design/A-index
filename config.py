@@ -69,7 +69,7 @@ INDEXES = [
     {"code": "399975", "ifind_code": "399975.SZ", "name": "证券公司", "display_name": "证券", "margin": True, "group": "sector"},
     # SmartBeta（策略因子）
     {"code": "H30269", "ifind_code": "H30269.CSI", "name": "红利低波", "display_name": "红利低波", "margin": True, "group": "smartbeta"},
-    {"code": "932365", "ifind_code": "932365.CSI", "name": "中证自由现金流", "display_name": "自由现金流", "margin": True, "group": "smartbeta"},
+    {"code": "980092", "ifind_code": "980092.SZ", "name": "国证自由现金流", "display_name": "自由现金流", "margin": True, "group": "smartbeta"},
     {"code": "883418", "ifind_code": "883418.TI", "name": "微盘股", "display_name": "微盘股", "margin": True, "group": "smartbeta"},
     {"code": "980081", "ifind_code": "980081.SZ", "name": "价值100", "display_name": "价值100", "margin": True, "group": "smartbeta"},
 ]

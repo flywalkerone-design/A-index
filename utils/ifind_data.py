@@ -19,6 +19,8 @@ ssl._create_default_https_context = ssl._create_unverified_context
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _session = requests.Session()
 _session.verify = False
+# 请求入口别名：离线快照构建（build_frozen_snapshot.py）通过替换此引用实现断网守卫
+_post = _session.post
 _access_token = None
 _token_expiry = 0
 
@@ -62,7 +64,7 @@ def _headers() -> dict:
 # 2. 融资余额（EDB）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _MARGIN_CACHE = {}
-_MARGIN_CACHE_SCHEMA = 2
+_MARGIN_CACHE_SCHEMA = 3
 _CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "ifind_margin_cache"
 
 
@@ -120,7 +122,9 @@ def _fetch_chunk(code: str, startdate: str, enddate: str) -> pd.DataFrame:
         "codes": code,
         "startdate": startdate.replace("-", ""),
         "enddate": enddate.replace("-", ""),
-        "functionpara": {"Days": "Tradedays", "Fill": "Previous"},
+        # 融资余额 T+1 公布：用 Fill:Blank，未公布的最新交易日返回空值，
+        # 避免把前一交易日融资余额填充成"有数据"，从而在温度计里算出假温度。
+        "functionpara": {"Days": "Tradedays", "Fill": "Blank"},
         "indipara": [{
             "indicator": "ths_margin_trading_balance_index",
             "indiparams": [""]

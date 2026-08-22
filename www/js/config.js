@@ -51,7 +51,7 @@ var AppConfig = (function () {
         { code: "399975", ifind: "399975.SZ", name: "证券公司", display: "证券", group: "sector", margin: true },
         // SmartBeta
         { code: "H30269", ifind: "H30269.CSI", name: "红利低波", display: "红利低波", group: "smartbeta", margin: true },
-        { code: "932365", ifind: "932365.CSI", name: "中证自由现金流", display: "自由现金流", group: "smartbeta", margin: true },
+        { code: "980092", ifind: "980092.SZ", name: "国证自由现金流", display: "自由现金流", group: "smartbeta", margin: true },
         { code: "883418", ifind: "883418.TI", name: "微盘股", display: "微盘股", group: "smartbeta", margin: true },
         { code: "980081", ifind: "980081.SZ", name: "价值100", display: "价值100", group: "smartbeta", margin: true },
     ];

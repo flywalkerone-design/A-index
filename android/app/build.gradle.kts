@@ -22,7 +22,10 @@ android {
         minSdk = 24
         targetSdk = 34
         versionCode = (buildDate.toIntOrNull() ?: 0) * 10 + (buildSeq.toIntOrNull() ?: 1)
-        versionName = if (buildSeq == "1") buildDate else buildDate + "V" + buildSeq
+        val displayVersion = if (buildSeq == "1") buildDate else buildDate + "V" + buildSeq
+        versionName = displayVersion
+        // 安装显示名跟随版本日期（如「指数温度计 0822」），不写死（strings.xml 不再定义 app_name）
+        resValue("string", "app_name", "指数温度计 " + displayVersion)
     }
 
     // 独立签名：仅当 CI 传入 keystore 时才配置（每次构建一把新密钥）
