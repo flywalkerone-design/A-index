@@ -5,6 +5,13 @@ on:
     branches: [main, master]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      version_seq:
+        description: '同一天多次构建的序号（V1/V2/V3，默认 1）'
+        required: false
+        default: '1'
+        type: choice
+        options: ['1', '2', '3', '4', '5']
 
 jobs:
   build:
@@ -37,22 +44,47 @@ jobs:
           mkdir -p android/app/src/main/assets/www
           cp -r www/. android/app/src/main/assets/www/
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
-          echo "=== assets/www/js/vendor ===" && ls android/app/src/main/assets/www/js/vendor
+          echo "=== assets/www ===" && ls android/app/src/main/assets/www
+
+      - name: Compute build parameters
+        id: build
+        run: |
+          echo "build_date=$(date +%m%d)" >> "$GITHUB_OUTPUT"
+          echo "build_seq=${{ github.event.inputs.version_seq || '1' }}" >> "$GITHUB_OUTPUT"
+          echo "keystore=$RUNNER_TEMP/sign-keystore.jks" >> "$GITHUB_OUTPUT"
+          artifact="index-crowding-$(date +%m%d)"
+          [ "${{ github.event.inputs.version_seq || '1' }}" != "1" ] && artifact="${artifact}V${{ github.event.inputs.version_seq || '1' }}"
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+
+      # 每次构建生成全新 keystore → 每个版本签名独立（多版本并存、老版本可回退）
+      - name: Generate unique signing keystore (per-build signature)
+        run: |
+          keytool -genkeypair -v \
+            -keystore "${{ steps.build.outputs.keystore }}" \
+            -alias release -keyalg RSA -keysize 2048 -validity 36500 \
+            -storepass "${{ github.run_id }}" -keypass "${{ github.run_id }}" \
+            -dname "CN=StockTemp,O=IndexCrowding,L=CN,C=CN"
 
       - name: Generate Gradle Wrapper
         working-directory: android
         run: gradle wrapper --gradle-version 8.5
 
-      - name: Build Debug APK
+      - name: Build Release APK
         working-directory: android
         run: |
           chmod +x ./gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -PbuildDate=${{ steps.build.outputs.build_date }} \
+            -PbuildSeq=${{ steps.build.outputs.build_seq }} \
+            -PsignKeystore=${{ steps.build.outputs.keystore }} \
+            -PsignStorePass=${{ github.run_id }} \
+            -PsignKeyAlias=release \
+            -PsignKeyPass=${{ github.run_id }}
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: index-crowding-0815
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: ${{ steps.build.outputs.artifact }}
+          path: android/app/build/outputs/apk/release/*.apk
           retention-days: 30
           if-no-files-found: error

@@ -10,13 +10,17 @@ var AppConfig = (function () {
     // Android APP 中 fetch.js 直接调 iFinD API，不经过 proxy
     var PROXY_BASE = "http://127.0.0.1:5000";
 
-    // ━━━ 28个指数配置（与 Python INDEXES 完全一致）━━━
+    // ━━━ 38个指数配置（与 Python INDEXES 完全一致）━━━
     var INDEXES = [
         // 主要指数
         { code: "000001", ifind: "000001.SH", name: "上证指数", display: "上证指数", group: "main", margin: true },
         { code: "399102", ifind: "399102.SZ", name: "创业板综", display: "创业板", group: "main", margin: true },
         { code: "000680", ifind: "000680.SH", name: "科创综指", display: "科创综指", group: "main", margin: true },
         { code: "899050", ifind: "899050.BJ", name: "北证50", display: "北证50", group: "main", margin: true },
+        { code: "000300", ifind: "000300.SH", name: "沪深300", display: "沪深300", group: "main", margin: true },
+        { code: "000905", ifind: "000905.SH", name: "中证500", display: "中证500", group: "main", margin: true },
+        { code: "000852", ifind: "000852.SH", name: "中证1000", display: "中证1000", group: "main", margin: true },
+        { code: "932000", ifind: "932000.CSI", name: "中证2000", display: "中证2000", group: "main", margin: true },
         // 站在光里
         { code: "931723", ifind: "931723.CSI", name: "光通信", display: "CPO", group: "light", margin: true },
         { code: "000685", ifind: "000685.SH", name: "科创芯片", display: "科创芯片", group: "light", margin: true },
@@ -31,7 +35,7 @@ var AppConfig = (function () {
         { code: "399998", ifind: "399998.SZ", name: "中证煤炭", display: "煤炭", group: "sector", margin: true },
         { code: "H30590", ifind: "H30590.CSI", name: "机器人", display: "机器人", group: "sector", margin: true },
         { code: "931594", ifind: "931594.CSI", name: "卫星产业", display: "卫星", group: "sector", margin: true },
-        { code: "399808", ifind: "399808.SZ", name: "中证新能", display: "新能源", group: "sector", margin: true },
+        { code: "931151", ifind: "931151.CSI", name: "中证光伏产业", display: "光伏", group: "sector", margin: true },
         { code: "931152", ifind: "931152.CSI", name: "CS创新药", display: "创新药", group: "sector", margin: true },
         { code: "886099", ifind: "886099.TI", name: "AI智能体", display: "AI应用", group: "sector", margin: true },
         { code: "881267", ifind: "881267.TI", name: "能源金属", display: "锂矿", group: "sector", margin: true },
@@ -41,10 +45,15 @@ var AppConfig = (function () {
         { code: "931719", ifind: "931719.CSI", name: "CS电池", display: "电池", group: "sector", margin: true },
         { code: "931238", ifind: "931238.CSI", name: "SSH黄金股票", display: "黄金股", group: "sector", margin: true },
         { code: "881145", ifind: "881145.TI", name: "电力", display: "电力", group: "sector", margin: true },
+        { code: "000949", ifind: "000949.CSI", name: "中证农业", display: "农业", group: "sector", margin: true },
+        { code: "931946", ifind: "931946.CSI", name: "中证畜牧养殖", display: "猪猪", group: "sector", margin: true },
+        { code: "930601", ifind: "930601.CSI", name: "中证软件服务", display: "软件", group: "sector", margin: true },
+        { code: "399975", ifind: "399975.SZ", name: "证券公司", display: "证券", group: "sector", margin: true },
         // SmartBeta
         { code: "H30269", ifind: "H30269.CSI", name: "红利低波", display: "红利低波", group: "smartbeta", margin: true },
-        { code: "931752", ifind: "931752.CSI", name: "中证自由现金流", display: "自由现金流", group: "smartbeta", margin: true },
+        { code: "932365", ifind: "932365.CSI", name: "中证自由现金流", display: "自由现金流", group: "smartbeta", margin: true },
         { code: "883418", ifind: "883418.TI", name: "微盘股", display: "微盘股", group: "smartbeta", margin: true },
+        { code: "980081", ifind: "980081.SZ", name: "价值100", display: "价值100", group: "smartbeta", margin: true },
     ];
 
     // ━━━ 指标参数（与 Excel 温度计完全一致）━━━

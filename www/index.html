@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>A股温度计</title>
+<title>指数温度计</title>
 <script src="js/vendor/html2canvas.min.js"></script>
 <script src="js/vendor/chart.umd.min.js"></script>
 <script src="js/vendor/hammer.min.js"></script>
@@ -70,6 +70,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
 .tl1{left:5%;color:#007AFF}.tl2{left:15%;color:#5AC8FA}.tl3{left:50%;color:#34C759}.tl4{left:85%;color:#FF9500}.tl5{left:95%;color:#FF3B30}
 
 .section-title{font-size:11px;font-weight:600;color:#86868B;margin:6px 0 4px}
+.sec-note{font-size:9px;font-weight:400;color:#AEAEB2;margin-left:3px}
 .poster-body{flex:1;display:flex;flex-direction:column;justify-content:center;overflow:hidden}
 
 /* 主要指数横条卡片 */
@@ -97,6 +98,10 @@ body{touch-action:pan-y;overscroll-behavior:none}
 .poster-main-grid .g-block{padding:5px 2px;min-height:38px}
 .poster-main-grid .g-block .bn{font-size:9px}
 .poster-main-grid .g-block .bt{font-size:14px}
+/* 合并海报（主要指数+Smart Beta）：两段紧凑居中，避免贴顶/与方块分离 */
+#posterCombined .poster-body{gap:8px}
+#posterCombined .poster-main-grid{flex:0 1 auto;align-content:center;margin-bottom:0}
+#posterCombined .grid{flex:0 0 auto;align-content:center}
 
 .poster-footer{text-align:center;margin-top:6px}
 .poster-footer .ft1{font-size:10px;color:#86868B}
@@ -180,10 +185,11 @@ body{touch-action:pan-y;overscroll-behavior:none}
 .d-section h3{font-size:13px;font-weight:600;margin-bottom:8px}
 .d-chart{height:260px;position:relative}
 .d-grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
-.d-table{width:100%;border-collapse:collapse}
-.d-table th,.d-table td{padding:5px 6px;text-align:left;font-size:11px;border-bottom:1px solid #F5F5F7}
-.d-table th{color:#86868B;font-weight:500;width:40%}
+.d-table{width:100%;border-collapse:collapse;font-size:10px}
+.d-table th,.d-table td{padding:4px 4px;text-align:right;font-size:10px;border-bottom:1px solid #F5F5F7;white-space:nowrap}
+.d-table th{color:#86868B;font-weight:500}
 .d-table td{color:#1D1D1F;font-weight:600}
+.d-table th:first-child,.d-table td:first-child{text-align:left}
 .d-rank{display:grid;gap:6px;margin-bottom:10px}
 .d-rank-pill{background:#F5F5F7;border-radius:8px;padding:6px 4px;text-align:center}
 .d-rank-pill .rn{font-size:10px;color:#86868B;margin-bottom:2px}
@@ -232,14 +238,6 @@ body{touch-action:pan-y;overscroll-behavior:none}
 .margin-table td:first-child{text-align:left;color:#1D1D1F;font-weight:500}
 .margin-table td.pos{color:#FF3B30}
 .margin-table td.neg{color:#34C759}
-.factor-table{width:100%;border-collapse:collapse;font-size:11px}
-.factor-table thead{position:sticky;top:0;z-index:1;background:#F7F8FA}
-.factor-table th{padding:7px 6px;text-align:right;color:#667085;font-weight:600;white-space:nowrap}
-.factor-table th:first-child{text-align:left}
-.factor-table td{padding:6px 6px;text-align:right;color:#344054;border-top:1px solid #F2F4F7;white-space:nowrap}
-.factor-table td:first-child{text-align:left;color:#1D1D1F;font-weight:500}
-.factor-table td.pos{color:#FF3B30}
-.factor-table td.neg{color:#34C759}
 .chart-landscape{position:fixed!important;z-index:250;inset:0!important;width:100vw!important;height:100vh!important;max-width:none!important;margin:0!important;border-radius:0!important;overflow:auto!important;padding:18px 20px calc(18px + env(safe-area-inset-bottom,0px))!important;background:#fff}
 .chart-landscape .data-chart,.chart-landscape .d-chart{height:calc(100vh - 150px)!important;min-height:280px}
 .chart-landscape .chart-range{margin-top:14px}
@@ -278,7 +276,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
         <!-- ===== 主页：海报 ===== -->
         <div class="page active" id="pageHome">
             <div style="position:relative">
-                <div class="page-title">A股温度计 <span class="page-subtitle" id="homeDate"></span></div>
+                <div class="page-title">指数温度计 <span class="page-subtitle" id="homeDate"></span></div>
                 <button class="refresh-btn" onclick="App.refreshData()" title="刷新数据" aria-label="刷新数据">↻</button>
                 <button class="settings-btn" onclick="App.openSettings()">⚙️</button>
             </div>
@@ -296,7 +294,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
             <div class="poster-card" id="posterLight">
                 <div class="poster-inner">
                     <div class="poster-header">
-                        <h2>A股温度计</h2>
+                        <h2>指数温度计</h2>
                         <div class="date" id="posterDate2"></div>
                     </div>
                     <div class="temp-bar"></div>
@@ -314,13 +312,13 @@ body{touch-action:pan-y;overscroll-behavior:none}
                     </div>
                 </div>
             </div>
-            <button class="dl-btn" onclick="App.downloadPoster('posterLight','A股温度计_站在光里')">📥 下载站在光里海报</button>
+            <button class="dl-btn" onclick="App.downloadPoster('posterLight','指数温度计_站在光里')">📥 下载站在光里海报</button>
 
             <!-- 海报3：主要指数+主题行业 合并 -->
             <div class="poster-card" id="posterCombined">
                 <div class="poster-inner">
                     <div class="poster-header">
-                        <h2>A股温度计</h2>
+                        <h2>指数温度计</h2>
                         <div class="date" id="posterDate5"></div>
                     </div>
                     <div class="temp-bar"></div>
@@ -329,10 +327,10 @@ body{touch-action:pan-y;overscroll-behavior:none}
                         <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
                     </div>
                     <div class="poster-body">
-                        <div class="section-title">主要指数</div>
+                        <div class="section-title">主要指数<span class="sec-note">· 8个</span></div>
                         <div class="poster-main-grid" id="combinedMainGrid"></div>
-                        <div class="section-title">主题行业</div>
-                        <div class="grid g4x4" id="combinedSectorGrid"></div>
+                        <div class="section-title">Smart Beta<span class="sec-note">· 4个</span></div>
+                        <div class="grid g4x4" id="combinedSmartGrid"></div>
                     </div>
                     <div class="poster-footer">
                         <div class="ft1">今日市场情绪播报 | 投资有风险，入市需谨慎</div>
@@ -340,13 +338,13 @@ body{touch-action:pan-y;overscroll-behavior:none}
                     </div>
                 </div>
             </div>
-            <button class="dl-btn" onclick="App.downloadPoster('posterCombined','A股温度计_主要指数+主题行业')">📥 下载合并海报</button>
+            <button class="dl-btn" onclick="App.downloadPoster('posterCombined','指数温度计_主要指数+SmartBeta')">📥 下载主要指数+SmartBeta海报</button>
 
             <!-- 海报4：主题行业 -->
             <div class="poster-card" id="posterSector">
                 <div class="poster-inner">
                     <div class="poster-header">
-                        <h2>A股温度计</h2>
+                        <h2>指数温度计</h2>
                         <div class="date" id="posterDate3"></div>
                     </div>
                     <div class="temp-bar"></div>
@@ -364,32 +362,9 @@ body{touch-action:pan-y;overscroll-behavior:none}
                     </div>
                 </div>
             </div>
-            <button class="dl-btn" onclick="App.downloadPoster('posterSector','A股温度计_主题行业')">📥 下载主题行业海报</button>
+            <button class="dl-btn" onclick="App.downloadPoster('posterSector','指数温度计_主题行业')">📥 下载主题行业海报</button>
 
-            <!-- 海报5：SmartBeta -->
-            <div class="poster-card" id="posterSmart">
-                <div class="poster-inner">
-                    <div class="poster-header">
-                        <h2>SmartBeta</h2>
-                        <div class="date" id="posterDate4"></div>
-                    </div>
-                    <div class="temp-bar"></div>
-                    <div class="temp-nums"><span style="left:0%">0</span><span style="left:10%">10</span><span style="left:20%">20</span><span style="left:80%">80</span><span style="left:90%">90</span><span style="left:100%">100</span></div>
-                    <div class="temp-labels">
-                        <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
-                    </div>
-                    <div class="poster-body">
-                        <div class="idx-cards" id="smartCards"></div>
-                    </div>
-                    <div class="poster-footer">
-                        <div class="ft1">今日市场情绪播报 | 投资有风险，入市需谨慎</div>
-                        <div class="ft2">觉得有用欢迎点赞关注</div>
-                    </div>
-                </div>
-            </div>
-            <button class="dl-btn" onclick="App.downloadPoster('posterSmart','SmartBeta')">📥 下载SmartBeta海报</button>
-
-            <!-- 海报6：连续5日冰点板块（温度<10） -->
+            <!-- 海报5：连续5日冰点板块（温度<10） -->
             <div class="poster-card" id="posterExtremeCold">
                 <div class="poster-inner">
                     <div class="poster-header">
@@ -411,7 +386,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
                     </div>
                 </div>
             </div>
-            <button class="dl-btn" onclick="App.downloadPoster('posterExtremeCold','A股温度计_冰点板块')">📥 下载冰点板块海报</button>
+            <button class="dl-btn" onclick="App.downloadPoster('posterExtremeCold','指数温度计_冰点板块')">📥 下载冰点板块海报</button>
 
             <!-- 海报7：连续5日狂热板块（温度>90） -->
             <div class="poster-card" id="posterExtremeHot">
@@ -435,7 +410,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
                     </div>
                 </div>
             </div>
-            <button class="dl-btn" onclick="App.downloadPoster('posterExtremeHot','A股温度计_狂热板块')">📥 下载狂热板块海报</button>
+            <button class="dl-btn" onclick="App.downloadPoster('posterExtremeHot','指数温度计_狂热板块')">📥 下载狂热板块海报</button>
         </div>
 
         <!-- ===== 全部指数Tab ===== -->
@@ -446,11 +421,11 @@ body{touch-action:pan-y;overscroll-behavior:none}
             </div>
             <div class="margin-notice margin-notice--all" id="allMarginNotice" style="display:none"></div>
             <div class="section-title">主要指数</div>
-            <div class="idx-cards" id="allMain"></div>
+            <div class="grid g4x4" id="allMain" style="margin-bottom:12px"></div>
             <div class="section-title">站在光里</div>
             <div class="grid g2x3" id="allLight" style="margin-bottom:12px"></div>
             <div class="section-title">SmartBeta</div>
-            <div class="idx-cards" id="allSmart" style="margin-bottom:12px"></div>
+            <div class="grid g4x4" id="allSmart" style="margin-bottom:12px"></div>
             <div class="section-title">主题行业</div>
             <div class="grid g4x4" id="allSector"></div>
             <!-- 极端板块 -->

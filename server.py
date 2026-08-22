@@ -14,7 +14,7 @@ sys.path.insert(0, str(APP_DIR))
 
 from data_service import fetch_all_data, check_token, update_token, TOKEN_FILE
 from chart_data_service import load_chart_data
-from utils.ifind_data import fetch_index_history_ifind, fetch_margin_ifind
+from utils.ifind_data import fetch_index_history_ifind, fetch_margin_ifind, fetch_turnover_ifind, fetch_rsi_ifind
 
 app = Flask(__name__)
 
@@ -157,6 +157,50 @@ def api_proxy_margin():
         })
     except Exception as e:
         return jsonify({"error": str(e), "dates": [], "margin_balance": []}), 500
+
+
+@app.route("/api/proxy/turnover", methods=["POST"])
+def proxy_turnover():
+    body = request.get_json(silent=True) or {}
+    code = body.get("code")
+    start = body.get("start", "")
+    end = body.get("end", "")
+    if not code:
+        return jsonify({"error": "missing code", "dates": [], "turnover_ratio": []}), 400
+
+    try:
+        df = fetch_turnover_ifind(code, start, end)
+        if df is None or df.empty:
+            return jsonify({"dates": [], "turnover_ratio": []})
+
+        return jsonify({
+            "dates": [d.strftime("%Y-%m-%d") for d in df["date"]],
+            "turnover_ratio": [None if v != v else float(v) for v in df["turnover_ratio"]],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "dates": [], "turnover_ratio": []}), 500
+
+
+@app.route("/api/proxy/rsi", methods=["POST"])
+def proxy_rsi():
+    body = request.get_json(silent=True) or {}
+    code = body.get("code")
+    start = body.get("start", "")
+    end = body.get("end", "")
+    if not code:
+        return jsonify({"error": "missing code", "dates": [], "rsi": []}), 400
+
+    try:
+        df = fetch_rsi_ifind(code, start, end)
+        if df is None or df.empty:
+            return jsonify({"dates": [], "rsi": []})
+
+        return jsonify({
+            "dates": [d.strftime("%Y-%m-%d") for d in df["date"]],
+            "rsi": [None if v != v else float(v) for v in df["rsi"]],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "dates": [], "rsi": []}), 500
 
 
 @app.route("/api/token/update", methods=["POST"])

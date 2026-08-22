@@ -285,7 +285,7 @@ var App = (function () {
             allDates: dates,
             allScores: scores,
             allCloses: closes,
-            allRet: dates.map(function () { return null; }),
+            allRet: Array.isArray(item.ret_series) ? item.ret_series.slice() : dates.map(function () { return null; }),
             dates: dates.slice(startIdx),
             scores: scores.slice(startIdx),
             closes: closes.slice(startIdx),
@@ -743,8 +743,8 @@ var App = (function () {
     function ensurePosterLayout() {
         var page = document.getElementById("pageHome");
         if (!page) return;
-        var ids = ["posterCombined", "posterLight", "posterSmart", "posterSector", "posterExtremeCold", "posterExtremeHot"];
-        var oldDefaultOrder = ["posterLight", "posterCombined", "posterSector", "posterSmart", "posterExtremeCold", "posterExtremeHot"];
+        var ids = ["posterCombined", "posterLight", "posterSector", "posterExtremeCold", "posterExtremeHot"];
+        var oldDefaultOrder = ["posterLight", "posterCombined", "posterSector", "posterExtremeCold", "posterExtremeHot"];
         ids.forEach(function (id) {
             var card = document.getElementById(id);
             if (!card || card.parentElement.classList.contains("poster-item")) return;
@@ -839,41 +839,44 @@ var App = (function () {
 
         updateMarginNotice();
         setText("homeDate", ds);
-        ["posterDate2", "posterDate3", "posterDate4", "posterDate5", "posterDate6", "posterDate7"].forEach(function (id) {
+        ["posterDate2", "posterDate3", "posterDate5", "posterDate6", "posterDate7"].forEach(function (id) {
             setText(id, ds);
         });
 
         // 主要指数仍在合并海报中展示，主页不再单独保留一张主要指数海报。
-        var mainV = v.filter(function (x) { return x.group === "main" && DATA[x.code]; });
+        var mainV = v.filter(function (x) { return x.group === "main"; });
         // 海报：站在光里
-        var lightV = v.filter(function (x) { return x.group === "light" && DATA[x.code]; })
+        var lightV = v.filter(function (x) { return x.group === "light"; })
             .sort(function (a, b) {
                 var da = getDisplayData(a.code), db = getDisplayData(b.code);
                 return (da ? da.score : 0) - (db ? db.score : 0);
             });
         document.getElementById("lightGrid").innerHTML = renderBlockGridHtml(lightV);
 
-        // 海报3：主要指数+主题行业 合并
-        var secV = v.filter(function (x) { return x.group === "sector" && DATA[x.code]; })
+        // 海报3：主要指数 + Smart Beta（合并到同一张海报，均用小方块）
+        var secV = v.filter(function (x) { return x.group === "sector"; })
+            .sort(function (a, b) {
+                var da = getDisplayData(a.code), db = getDisplayData(b.code);
+                return (da ? da.score : 0) - (db ? db.score : 0);
+            });
+        var smartV = v.filter(function (x) { return x.group === "smartbeta"; })
             .sort(function (a, b) {
                 var da = getDisplayData(a.code), db = getDisplayData(b.code);
                 return (da ? da.score : 0) - (db ? db.score : 0);
             });
         document.getElementById("combinedMainGrid").innerHTML = mainV.map(function (x) {
             var d = getDisplayData(x.code);
-            if (!d) return '';
+            if (!d) {
+                return '<div class="g-block" style="background:#F2F2F7" onclick="App.showDetail(\'' + x.code + '\')"><div class="bn">' + x.display + '</div><div class="bt" style="color:#AEAEB2">暂无</div></div>';
+            }
             var ec = d.emotionColor || "#34C759";
             var tc = (ec === "#5AC8FA" || ec === "#34C759") ? "dt" : "lt";
             return '<div class="g-block ' + tc + '" style="background:' + ec + '" onclick="App.showDetail(\'' + x.code + '\')"><div class="bn">' + x.display + '</div><div class="bt">' + d.score + '</div></div>';
         }).join("");
-        document.getElementById("combinedSectorGrid").innerHTML = renderBlockGridHtml(secV);
+        document.getElementById("combinedSmartGrid").innerHTML = renderBlockGridHtml(smartV);
 
-        // 海报4：主题行业
+        // 海报4：主题行业（小方块展示全部主题行业）
         document.getElementById("sectorGrid").innerHTML = renderBlockGridHtml(secV);
-
-        // 海报5：SmartBeta
-        var smartV = v.filter(function (x) { return x.group === "smartbeta" && DATA[x.code]; });
-        document.getElementById("smartCards").innerHTML = renderCardListHtml(smartV);
 
         // 海报6：连续5日冰点板块（温度<10）
         var coldCount = extreme.cold.length;
@@ -896,46 +899,37 @@ var App = (function () {
         var v = allVis();
         var extreme = findExtremeSectors(v);
 
-        var mainV = v.filter(function (x) { return x.group === "main" && DATA[x.code]; });
-        document.getElementById("allMain").innerHTML = renderCardListHtml(mainV);
+        var mainV = v.filter(function (x) { return x.group === "main"; });
+        document.getElementById("allMain").innerHTML = renderBlockGridHtml(mainV);
 
-        var lightV = v.filter(function (x) { return x.group === "light" && DATA[x.code]; })
+        var lightV = v.filter(function (x) { return x.group === "light"; })
             .sort(function (a, b) {
                 var da = getDisplayData(a.code), db = getDisplayData(b.code);
                 return (da ? da.score : 0) - (db ? db.score : 0);
             });
         document.getElementById("allLight").innerHTML = renderBlockGridHtml(lightV);
 
-        var secV = v.filter(function (x) { return x.group === "sector" && DATA[x.code]; })
+        var secV = v.filter(function (x) { return x.group === "sector"; })
             .sort(function (a, b) {
                 var da = getDisplayData(a.code), db = getDisplayData(b.code);
                 return (da ? da.score : 0) - (db ? db.score : 0);
             });
         document.getElementById("allSector").innerHTML = renderBlockGridHtml(secV);
 
-        var smartV = v.filter(function (x) { return x.group === "smartbeta" && DATA[x.code]; });
-        document.getElementById("allSmart").innerHTML = renderCardListHtml(smartV);
+        var smartV = v.filter(function (x) { return x.group === "smartbeta"; });
+        document.getElementById("allSmart").innerHTML = renderBlockGridHtml(smartV);
 
         // 极端板块（全部tab）
         document.getElementById("allExtreme").innerHTML = renderAllExtremeHtml(extreme);
     }
 
-    function renderCardListHtml(items) {
-        return items.map(function (x) {
-            var d = getDisplayData(x.code);
-            if (!d) return '';
-            var ec = d.emotionColor || "#34C759";
-            return '<div class="idx-card" onclick="App.showDetail(\'' + x.code + '\')">' +
-                '<div class="idx-name">' + x.display + '</div>' +
-                '<div class="idx-right"><div class="idx-temp" style="color:' + ec + '">' + d.score + '°</div>' +
-                '<div class="idx-tag" style="background:' + ec + '">' + (d.emotion || "中性") + '</div></div></div>';
-        }).join("");
-    }
-
     function renderBlockGridHtml(items) {
         return items.map(function (x) {
             var d = getDisplayData(x.code);
-            if (!d) return '';
+            if (!d) {
+                return '<div class="g-block" style="background:#F2F2F7" onclick="App.showDetail(\'' + x.code + '\')">' +
+                    '<div class="bn">' + x.display + '</div><div class="bt" style="color:#AEAEB2">暂无</div></div>';
+            }
             var ec = d.emotionColor || "#34C759";
             var tc = (ec === "#5AC8FA" || ec === "#34C759") ? "dt" : "lt";
             return '<div class="g-block ' + tc + '" style="background:' + ec + '" onclick="App.showDetail(\'' + x.code + '\')">' +
@@ -1028,11 +1022,6 @@ var App = (function () {
         if (d.ret !== null) html += '<div class="c ' + (d.ret >= 0 ? "up" : "dn") + '">' + (d.ret >= 0 ? "+" : "") + d.ret + '%</div>';
         html += '</div></div>';
 
-        // 温度因子明细（当前日期 + 前日对比，随全局日期回溯）
-        html += '<div class="d-section" id="factorSection"><h3>温度因子明细 <span id="factorDate" style="font-weight:400;font-size:11px;color:#86868B"></span></h3>';
-        html += '<div style="max-height:260px;overflow-y:auto;-webkit-overflow-scrolling:touch">';
-        html += '<table class="factor-table"><thead><tr><th>因子</th><th>百分位</th><th>前日</th><th>变化</th><th>当前值</th></tr></thead><tbody id="factorBody"></tbody></table></div></div>';
-
         // 走势图（去掉滑轨，手势与数据Tab统一）
         html += '<div class="d-section" id="detailChartSection"><h3>市场温度 & ' + x.display + '走势<button class="chart-view-btn" onclick="App.toggleChartLandscape(\'detail\')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom(\'detail\')" title="重置缩放" aria-label="重置缩放">⟲</button></h3><div class="d-chart"><canvas id="detailChart"></canvas></div><p style="font-size:11px;color:#86868B;margin-top:4px">单指左右拖动平移/查看，双指捏合缩放，上下滑动页面。</p></div>';
 
@@ -1050,14 +1039,18 @@ var App = (function () {
             '<th class="clickable" onclick="App.sortYearTable(\'date\')">日期 ▾</th>' +
             '<th class="clickable" onclick="App.sortYearTable(\'temp\')">温度 ▾</th>' +
             '<th class="clickable" onclick="App.sortYearTable(\'close\')">收盘 ▾</th>' +
-            '<th class="clickable" onclick="App.sortYearTable(\'ret\')">涨跌幅 ▾</th>' +
+            '<th class="clickable" onclick="App.sortYearTable(\'ret\')">涨跌 ▾</th>' +
+            '<th class="clickable" onclick="App.sortYearTable(\'turnover\')">换手 ▾</th>' +
+            '<th class="clickable" onclick="App.sortYearTable(\'pe\')">PE ▾</th>' +
+            '<th class="clickable" onclick="App.sortYearTable(\'rsi\')">RSI ▾</th>' +
+            '<th class="clickable" onclick="App.sortYearTable(\'margin\')">融资亿 ▾</th>' +
             '</tr></thead><tbody id="yearTableBody"></tbody></table>';
         html += '</div></div>';
 
         document.getElementById("detailContent").innerHTML = html;
         switchTab("detail");
 
-        setTimeout(function () { renderCalendar(d); renderYearTable(d); renderFactorTable(); }, 10);
+        setTimeout(function () { renderCalendar(d); renderYearTable(d); }, 10);
 
         DETAIL_CODE = code;
         setTimeout(function () { renderDetailChart(); }, 80);
@@ -1194,47 +1187,7 @@ var App = (function () {
         container.innerHTML = html;
     }
 
-    // ━━━ 温度因子明细表 ━━━
-    function factorRow(name, pctArr, rawArr, i, prevI, fmt) {
-        var v = pctArr && pctArr[i] !== null && pctArr[i] !== undefined ? pctArr[i] : null;
-        var pv = pctArr && prevI >= 0 && pctArr[prevI] !== null && pctArr[prevI] !== undefined ? pctArr[prevI] : null;
-        var raw = rawArr && rawArr[i] !== null && rawArr[i] !== undefined ? rawArr[i] : null;
-        var diff = (v !== null && pv !== null) ? Math.round((v - pv) * 10) / 10 : null;
-        return '<tr><td>' + name + '</td>' +
-            '<td>' + (v !== null ? v.toFixed(1) : '—') + '</td>' +
-            '<td>' + (pv !== null ? pv.toFixed(1) : '—') + '</td>' +
-            '<td class="' + (diff === null ? '' : (diff >= 0 ? 'pos' : 'neg')) + '">' +
-            (diff === null ? '—' : (diff >= 0 ? '+' : '') + diff.toFixed(1)) + '</td>' +
-            '<td>' + (raw !== null ? fmt(raw) : '—') + '</td></tr>';
-    }
-
-    function renderFactorTable() {
-        var base = DETAIL_CODE ? DATA[DETAIL_CODE] : null;
-        var body = document.getElementById("factorBody");
-        var dateEl = document.getElementById("factorDate");
-        if (!body || !base || !base.allDates) return;
-        var endIndex = SELECTED_DATE
-            ? findClosestTradeIdx(base.allDates, SELECTED_DATE)
-            : (base.validIdx !== undefined ? base.validIdx : base.allDates.length - 1);
-        var prevI = endIndex - 1;
-        if (dateEl) dateEl.textContent = endIndex >= 0 ? " · " + base.allDates[endIndex] : "";
-        if (!base.factorClose || !base.factorClose.length) {
-            body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#AEAEB2;font-weight:400">封存数据暂不含因子明细，联网刷新后可见</td></tr>';
-            return;
-        }
-        var hasMargin = false;
-        for (var i = 0; i < (base.factorMargin || []).length; i++) {
-            if (base.factorMargin[i] !== null) { hasMargin = true; break; }
-        }
-        var html = factorRow("收盘价百分位", base.factorClose, base.allCloses, endIndex, prevI, function (x) { return String(Math.round(x * 100) / 100); });
-        html += factorRow("换手率百分位", base.factorTurnover, base.allTurnover, endIndex, prevI, function (x) { return x.toFixed(2) + "%"; });
-        html += factorRow("PE TTM百分位", base.factorPe, base.allPe, endIndex, prevI, function (x) { return x.toFixed(2); });
-        html += factorRow("RSI百分位", base.factorRsi, base.allRsi, endIndex, prevI, function (x) { return x.toFixed(1); });
-        if (hasMargin) html += factorRow("融资余额百分位", base.factorMargin, base.allMargin, endIndex, prevI, function (x) { return x.toFixed(2); });
-        body.innerHTML = html;
-    }
-
-    // ━━━ 近1年数据表格 ━━━
+    // ━━━ 近1年数据表格（含温度因子原始值：换手率/PE/RSI/融资余额）━━━
     var YEAR_TABLE_DATA = null;
     var YEAR_SORT_KEY = "date";
     var YEAR_SORT_ASC = false;
@@ -1254,6 +1207,10 @@ var App = (function () {
                 temp: base.allScores[i],
                 close: base.allCloses[i],
                 ret: base.allRet ? base.allRet[i] : null,
+                turnover: base.allTurnover ? base.allTurnover[i] : null,
+                pe: base.allPe ? base.allPe[i] : null,
+                rsi: base.allRsi ? base.allRsi[i] : null,
+                margin: base.allMargin ? base.allMargin[i] : null,
             });
         }
 
@@ -1273,17 +1230,25 @@ var App = (function () {
             var ec = row.temp !== null ? tempColor(row.temp) : "#86868B";
             var retStr = row.ret !== null ? (row.ret >= 0 ? "+" : "") + row.ret + "%" : "-";
             var retColor = row.ret !== null ? (row.ret >= 0 ? "color:#FF3B30" : "color:#34C759") : "";
+            var turnoverStr = row.turnover !== null ? row.turnover.toFixed(2) : "-";
+            var peStr = row.pe !== null ? row.pe.toFixed(2) : "-";
+            var rsiStr = row.rsi !== null ? row.rsi.toFixed(1) : "-";
+            var marginStr = row.margin !== null ? (row.margin / 1e8).toFixed(2) : "-";
             html += '<tr>' +
                 '<td>' + row.date + '</td>' +
                 '<td><span class="temp-dot" style="background:' + ec + '"></span>' + (row.temp !== null ? row.temp : '-') + '</td>' +
                 '<td>' + (row.close !== null ? row.close.toLocaleString() : '-') + '</td>' +
-                '<td style="' + retColor + '">' + retStr + '</td></tr>';
+                '<td style="' + retColor + '">' + retStr + '</td>' +
+                '<td>' + turnoverStr + '</td>' +
+                '<td>' + peStr + '</td>' +
+                '<td>' + rsiStr + '</td>' +
+                '<td>' + marginStr + '</td></tr>';
         });
         tbody.innerHTML = html;
 
         var hint = document.getElementById("sortHint");
         if (hint) {
-            var colNames = { date: "日期", temp: "温度", close: "收盘", ret: "涨跌幅" };
+            var colNames = { date: "日期", temp: "温度", close: "收盘", ret: "涨跌幅", turnover: "换手", pe: "PE", rsi: "RSI", margin: "融资亿" };
             hint.textContent = "按" + colNames[YEAR_SORT_KEY] + (YEAR_SORT_ASC ? "升序" : "降序") + " | 点击切换";
         }
     }
@@ -2444,7 +2409,7 @@ var App = (function () {
                     document.body.removeChild(poster);
                     if (overlay) overlay.classList.remove("show");
 
-                    var filename = "A股温度计_" + x.display + "_30日_" + new Date().toISOString().slice(0, 10) + ".png";
+                    var filename = "指数温度计_" + x.display + "_30日_" + new Date().toISOString().slice(0, 10) + ".png";
 
                     if (IS_ANDROID) {
                         try {

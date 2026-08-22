@@ -35,6 +35,10 @@ INDEXES = [
     {"code": "399102", "ifind_code": "399102.SZ", "name": "创业板综", "display_name": "创业板", "margin": True, "group": "main"},
     {"code": "000680", "ifind_code": "000680.SH", "name": "科创综指", "display_name": "科创综指", "margin": True, "group": "main"},
     {"code": "899050", "ifind_code": "899050.BJ", "name": "北证50", "display_name": "北证50", "margin": True, "group": "main"},
+    {"code": "000300", "ifind_code": "000300.SH", "name": "沪深300", "display_name": "沪深300", "margin": True, "group": "main"},
+    {"code": "000905", "ifind_code": "000905.SH", "name": "中证500", "display_name": "中证500", "margin": True, "group": "main"},
+    {"code": "000852", "ifind_code": "000852.SH", "name": "中证1000", "display_name": "中证1000", "margin": True, "group": "main"},
+    {"code": "932000", "ifind_code": "932000.CSI", "name": "中证2000", "display_name": "中证2000", "margin": True, "group": "main"},
     # 站在光里（2×6 固定板块）
     {"code": "931723", "ifind_code": "931723.CSI", "name": "光通信", "display_name": "CPO", "margin": True, "group": "light"},
     {"code": "000685", "ifind_code": "000685.SH", "name": "科创芯片", "display_name": "科创芯片", "margin": True, "group": "light"},
@@ -49,7 +53,7 @@ INDEXES = [
     {"code": "399998", "ifind_code": "399998.SZ", "name": "中证煤炭", "display_name": "煤炭", "margin": True, "group": "sector"},
     {"code": "H30590", "ifind_code": "H30590.CSI", "name": "机器人", "display_name": "机器人", "margin": True, "group": "sector"},
     {"code": "931594", "ifind_code": "931594.CSI", "name": "卫星产业", "display_name": "卫星", "margin": True, "group": "sector"},
-    {"code": "399808", "ifind_code": "399808.SZ", "name": "中证新能", "display_name": "新能源", "margin": True, "group": "sector"},
+    {"code": "931151", "ifind_code": "931151.CSI", "name": "中证光伏产业", "display_name": "光伏", "margin": True, "group": "sector"},
     {"code": "931152", "ifind_code": "931152.CSI", "name": "CS创新药", "display_name": "创新药", "margin": True, "group": "sector"},
     {"code": "886099", "ifind_code": "886099.TI", "name": "AI智能体", "display_name": "AI应用", "margin": True, "group": "sector"},
     {"code": "881267", "ifind_code": "881267.TI", "name": "能源金属", "display_name": "锂矿", "margin": True, "group": "sector"},
@@ -59,10 +63,15 @@ INDEXES = [
     {"code": "931719", "ifind_code": "931719.CSI", "name": "CS电池", "display_name": "电池", "margin": True, "group": "sector"},
     {"code": "931238", "ifind_code": "931238.CSI", "name": "SSH黄金股票", "display_name": "黄金股", "margin": True, "group": "sector"},
     {"code": "881145", "ifind_code": "881145.TI", "name": "电力", "display_name": "电力", "margin": True, "group": "sector"},
+    {"code": "000949", "ifind_code": "000949.CSI", "name": "中证农业", "display_name": "农业", "margin": True, "group": "sector"},
+    {"code": "931946", "ifind_code": "931946.CSI", "name": "中证畜牧养殖", "display_name": "猪猪", "margin": True, "group": "sector"},
+    {"code": "930601", "ifind_code": "930601.CSI", "name": "中证软件服务", "display_name": "软件", "margin": True, "group": "sector"},
+    {"code": "399975", "ifind_code": "399975.SZ", "name": "证券公司", "display_name": "证券", "margin": True, "group": "sector"},
     # SmartBeta（策略因子）
     {"code": "H30269", "ifind_code": "H30269.CSI", "name": "红利低波", "display_name": "红利低波", "margin": True, "group": "smartbeta"},
-    {"code": "931752", "ifind_code": "931752.CSI", "name": "中证自由现金流", "display_name": "自由现金流", "margin": True, "group": "smartbeta"},
+    {"code": "932365", "ifind_code": "932365.CSI", "name": "中证自由现金流", "display_name": "自由现金流", "margin": True, "group": "smartbeta"},
     {"code": "883418", "ifind_code": "883418.TI", "name": "微盘股", "display_name": "微盘股", "margin": True, "group": "smartbeta"},
+    {"code": "980081", "ifind_code": "980081.SZ", "name": "价值100", "display_name": "价值100", "margin": True, "group": "smartbeta"},
 ]
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━
