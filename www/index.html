@@ -232,12 +232,21 @@ body{touch-action:pan-y;overscroll-behavior:none}
 .margin-table td:first-child{text-align:left;color:#1D1D1F;font-weight:500}
 .margin-table td.pos{color:#FF3B30}
 .margin-table td.neg{color:#34C759}
+.factor-table{width:100%;border-collapse:collapse;font-size:11px}
+.factor-table thead{position:sticky;top:0;z-index:1;background:#F7F8FA}
+.factor-table th{padding:7px 6px;text-align:right;color:#667085;font-weight:600;white-space:nowrap}
+.factor-table th:first-child{text-align:left}
+.factor-table td{padding:6px 6px;text-align:right;color:#344054;border-top:1px solid #F2F4F7;white-space:nowrap}
+.factor-table td:first-child{text-align:left;color:#1D1D1F;font-weight:500}
+.factor-table td.pos{color:#FF3B30}
+.factor-table td.neg{color:#34C759}
 .chart-landscape{position:fixed!important;z-index:250;inset:0!important;width:100vw!important;height:100vh!important;max-width:none!important;margin:0!important;border-radius:0!important;overflow:auto!important;padding:18px 20px calc(18px + env(safe-area-inset-bottom,0px))!important;background:#fff}
 .chart-landscape .data-chart,.chart-landscape .d-chart{height:calc(100vh - 150px)!important;min-height:280px}
 .chart-landscape .chart-range{margin-top:14px}
 .data-section p{font-size:11px;color:#86868B;margin:0 0 8px;line-height:1.5}
 .data-chart{height:280px;position:relative}
 .data-chart canvas{width:100%!important;height:100%!important}
+.data-chart canvas,.d-chart canvas{touch-action:pan-y!important}
 .data-status{text-align:center;color:#86868B;font-size:13px;padding:24px 8px}
 .chart-range{margin-top:10px;padding:8px 10px 5px;border-radius:10px;background:#F7F8FA;border:1px solid #EAECF0}
 .chart-range-head{display:flex;align-items:center;justify-content:space-between;color:#667085;font-size:10px;margin-bottom:2px}
@@ -460,7 +469,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
             <div id="dataCharts" style="display:none">
                 <section class="data-section" id="dataSection-market">
                     <h3>上证指数与成交额 20 日均线<button class="chart-view-btn" onclick="App.toggleChartLandscape('market')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom('market')" title="重置缩放" aria-label="重置缩放">⟲</button></h3>
-                    <p>单指查看数据，双指拖动平移、捏合缩放。上证指数走势与成交额 20 日均线叠加观察。</p>
+                    <p>单指左右拖动平移/查看，双指捏合缩放，上下滑动页面。上证指数走势与成交额 20 日均线叠加观察。</p>
                     <div class="data-chart"><canvas id="marketChart"></canvas></div>
                 </section>
                 <section class="data-section" id="dataSection-margin">
@@ -478,6 +487,16 @@ body{touch-action:pan-y;overscroll-behavior:none}
                     <h3>宽基 ETF 净流入<button class="chart-view-btn" onclick="App.toggleChartLandscape('etf')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom('etf')" title="重置缩放" aria-label="重置缩放">⟲</button></h3>
                     <p>展示宽基 ETF 净流入合计，单位为亿元。</p>
                     <div class="data-chart"><canvas id="etfChart"></canvas></div>
+                </section>
+                <section class="data-section" id="dataSection-coldCount">
+                    <h3>冰点板块数量走势（温度&lt;10）<button class="chart-view-btn" onclick="App.toggleChartLandscape('coldCount')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom('coldCount')" title="重置缩放" aria-label="重置缩放">⟲</button></h3>
+                    <p>单指左右拖动平移/查看，双指捏合缩放，上下滑动页面。每日温度&lt;10（冰点）的指数数量。</p>
+                    <div class="data-chart"><canvas id="coldCountChart"></canvas></div>
+                </section>
+                <section class="data-section" id="dataSection-hotCount">
+                    <h3>狂热板块数量走势（温度≥90）<button class="chart-view-btn" onclick="App.toggleChartLandscape('hotCount')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom('hotCount')" title="重置缩放" aria-label="重置缩放">⟲</button></h3>
+                    <p>单指左右拖动平移/查看，双指捏合缩放，上下滑动页面。每日温度≥90（狂热）的指数数量。</p>
+                    <div class="data-chart"><canvas id="hotCountChart"></canvas></div>
                 </section>
             </div>
         </div>
@@ -537,11 +556,11 @@ body{touch-action:pan-y;overscroll-behavior:none}
 <!-- end phone-wrapper -->
 
 <!-- 加载 JS 模块 -->
-<script src="js/config.js?v=20260809-2"></script>
-<script src="js/indicators.js?v=20260809-2"></script>
-<script src="js/scoring.js?v=20260809-2"></script>
-<script src="js/fetch.js?v=20260809-2"></script>
-<script src="js/app.js?v=20260809-2"></script>
+<script src="js/config.js?v=20260822"></script>
+<script src="js/indicators.js?v=20260822"></script>
+<script src="js/scoring.js?v=20260822"></script>
+<script src="js/fetch.js?v=20260822"></script>
+<script src="js/app.js?v=20260822"></script>
 
 <script>
 // 初始化

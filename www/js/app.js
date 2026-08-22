@@ -22,18 +22,18 @@ var App = (function () {
     var CHART_OVERLAP_DAYS = 10;
     var CHART_RANGES = {};
     var DETAIL_CODE = null;
+    var DETAIL_FROM_TAB = "home";  // 详情页返回时回到来源 tab
     var MARGIN_SORT_KEY = "date";
     var MARGIN_SORT_ASC = false; // 默认日期倒序（最新在前）
     var POSTER_LAYOUT_KEY = "a_stock_poster_layout_v1";
     var POSTER_EDITING = false;
-    var ACTIVE_CHART_LANDSCAPE = null;
     var SELECTED_DATE = null;  // 日期回溯：选中的日期，null=最新
-    var DATA_CACHE_KEY = "a_stock_data_snapshot_v6";
+    var DATA_CACHE_KEY = "a_stock_data_snapshot_v7";
+    var CACHE_SNAPSHOT_DATA = null;   // 最近一次从缓存读出的快照
+    var CACHE_SNAPSHOT_DATE = "";     // 缓存快照最新数据日期
     var REFRESH_IN_PROGRESS = false;
     var IS_FROZEN_BUILD = !!(window.Android && window.Android.isFrozenBuild && window.Android.isFrozenBuild());
     var FROZEN_DATA_ASSET = "data/frozen_data_0815.json";
-    var FROZEN_DATA_LOADED = false;
-    var HAMMER_MANAGERS = [];  // chartjs-plugin-zoom 两指平移用的 Hammer 实例
 
     // ━━━ 配置管理 ━━━
     var SK = "a_stock_cfg_v6";
@@ -205,15 +205,42 @@ var App = (function () {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 数据加载（前端本地计算）
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    function maxDataDate(data) {
+        var latest = "";
+        Object.keys(data || {}).forEach(function (code) {
+            var d = data[code];
+            if (!d || !d.allDates || !d.allScores) return;
+            var i = d.allDates.length - 1;
+            while (i >= 0 && (d.allScores[i] === null || d.allScores[i] === undefined)) i--;
+            if (i >= 0 && d.allDates[i] > latest) latest = d.allDates[i];
+        });
+        return latest;
+    }
+
+    function snapshotMaxDate(snapshot) {
+        var latest = "";
+        (snapshot && snapshot.indices || []).forEach(function (item) {
+            if (!item || !item.dates || !item.scores) return;
+            var i = item.dates.length - 1;
+            while (i >= 0 && (item.scores[i] === null || item.scores[i] === undefined)) i--;
+            if (i >= 0 && item.dates[i] > latest) latest = item.dates[i];
+        });
+        return latest;
+    }
+
     function loadDataSnapshot() {
+        CACHE_SNAPSHOT_DATA = null;
+        CACHE_SNAPSHOT_DATE = "";
         try {
             var raw = localStorage.getItem(DATA_CACHE_KEY);
             if (!raw) return false;
             var snapshot = JSON.parse(raw);
-            if (!snapshot || snapshot.version !== 1 || !snapshot.data) return false;
+            if (!snapshot || snapshot.version !== 2 || !snapshot.data) return false;
             var codes = Object.keys(snapshot.data);
             if (!codes.length) return false;
             DATA = snapshot.data;
+            CACHE_SNAPSHOT_DATA = snapshot.data;
+            CACHE_SNAPSHOT_DATE = maxDataDate(snapshot.data);
             return true;
         } catch (e) {
             return false;
@@ -245,7 +272,15 @@ var App = (function () {
             ma20: item.ma20,
             ma60: item.ma60,
             ranks: item.ranks || {},
-            factorRanks: {},
+            factorClose: item.rank_close || [],
+            factorTurnover: item.rank_turnover || [],
+            factorPe: item.rank_pe || [],
+            factorRsi: item.rank_rsi || [],
+            factorMargin: item.rank_margin || [],
+            allTurnover: item.turnover || [],
+            allPe: item.pe_series || [],
+            allRsi: item.rsi_series || [],
+            allMargin: item.margin_series || [],
             validIdx: validIdx,
             allDates: dates,
             allScores: scores,
@@ -266,7 +301,6 @@ var App = (function () {
             });
             if (!Object.keys(next).length) throw new Error("0815 封存快照为空");
             DATA = next;
-            FROZEN_DATA_LOADED = true;
             return snapshot;
         });
     }
@@ -275,7 +309,7 @@ var App = (function () {
         if (!Object.keys(DATA).length) return;
         try {
             localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({
-                version: 1,
+                version: 2,
                 savedAt: Date.now(),
                 data: DATA,
             }));
@@ -286,6 +320,8 @@ var App = (function () {
 
     function clearDataSnapshot() {
         try { localStorage.removeItem(DATA_CACHE_KEY); } catch (e) { /* ignore */ }
+        CACHE_SNAPSHOT_DATA = null;
+        CACHE_SNAPSHOT_DATE = "";
     }
 
     function renderCachedData() {
@@ -295,19 +331,37 @@ var App = (function () {
         if (CURRENT_TAB === "data" && CHART_DATA) renderDataCharts();
     }
 
+    function hasLiveToken() {
+        if (!window.Android) return true;  // 浏览器开发模式（proxy 持有 token）
+        if (window.Android.hasRefreshToken) {
+            try { return !!window.Android.hasRefreshToken(); } catch (e) { return false; }
+        }
+        return false;
+    }
+
     function fetchLocal(force) {
         force = !!force;
+        // 冻结版手动刷新必须有 token，否则会全走 API 且假报成功
+        if (IS_FROZEN_BUILD && force && !hasLiveToken()) {
+            showLoading(false);
+            showToast("封存版未设置iFinD Token，无法联网刷新");
+            return;
+        }
         // The bundled 0815 snapshot avoids API calls on first launch and on
         // ordinary app opens. A user-requested refresh still uses the normal
         // incremental data pipeline.
         if (IS_FROZEN_BUILD && !force) {
-            if (Object.keys(DATA).length) {
-                renderCachedData();
-                return;
-            }
-            loadFrozenSnapshot().then(function () {
+            var hasCached = Object.keys(DATA).length > 0;
+            loadFrozenSnapshot().then(function (snapshot) {
+                // 缓存（用户刷新过）比内置快照新 → 保留缓存；否则用内置快照
+                var bundled = snapshotMaxDate(snapshot);
+                if (hasCached && CACHE_SNAPSHOT_DATA && CACHE_SNAPSHOT_DATE && bundled &&
+                    CACHE_SNAPSHOT_DATE >= bundled) {
+                    DATA = CACHE_SNAPSHOT_DATA;
+                }
                 renderCachedData();
             }).catch(function (error) {
+                if (hasCached) { renderCachedData(); return; }
                 showLoading(false);
                 showToast("0815 封存数据加载失败");
                 console.error(error);
@@ -338,6 +392,7 @@ var App = (function () {
         var completed = 0;
         var total = indexes.length;
         var errors = [];
+        var successCount = 0;
 
         function onDone() {
             completed++;
@@ -345,6 +400,10 @@ var App = (function () {
             if (completed >= total) {
                 REFRESH_IN_PROGRESS = false;
                 showLoading(false);
+                if (successCount === 0) {
+                    showToast(IS_FROZEN_BUILD ? "刷新失败，请检查Token或网络" : "数据获取失败，请检查网络");
+                    return;
+                }
                 SELECTED_DATE = null;
                 updateDatePickerMax();
                 renderAll();
@@ -364,6 +423,7 @@ var App = (function () {
                 .then(function (data) {
                     if (data) {
                         DATA[idx.code] = buildIndexResult(data, idx);
+                        successCount++;
                     } else {
                         errors.push(idx.code + ": 无数据");
                     }
@@ -374,6 +434,10 @@ var App = (function () {
                     onDone();
                 });
         });
+    }
+
+    function pct1(v) {
+        return v === null || v === undefined || isNaN(v) ? null : Math.round(v * 1000) / 10;
     }
 
     function buildIndexResult(data, idxConfig) {
@@ -410,6 +474,18 @@ var App = (function () {
             return r !== null ? Math.round(r * 100) / 100 : null;
         }) : null;
 
+        // 逐日因子序列（百分位 0-100，1 位小数），与 allDates 对齐，供详情页因子表回溯
+        var factorClose = data.rank_close ? data.rank_close.map(pct1) : null;
+        var factorTurnover = data.rank_turnover ? data.rank_turnover.map(pct1) : null;
+        var factorPe = data.rank_pe ? data.rank_pe.map(pct1) : null;
+        var factorRsi = data.rank_rsi ? data.rank_rsi.map(pct1) : null;
+        var factorMargin = data.rank_margin ? data.rank_margin.map(pct1) : null;
+        // 原始值序列（用于因子表"当前值"列）
+        var allTurnover = data.turnover_ratio ? data.turnover_ratio.slice() : null;
+        var allPe = data.pe ? data.pe.slice() : null;
+        var allRsi = data.RSI ? data.RSI.slice() : null;
+        var allMargin = data.margin_balance ? data.margin_balance.slice() : null;
+
         var chartLen = Math.min(180, n);
         var startIdx = n - chartLen;
         var dates180 = allDates.slice(startIdx);
@@ -439,6 +515,15 @@ var App = (function () {
             allScores: allScores,
             allCloses: allCloses,
             allRet: allRet,
+            factorClose: factorClose,
+            factorTurnover: factorTurnover,
+            factorPe: factorPe,
+            factorRsi: factorRsi,
+            factorMargin: factorMargin,
+            allTurnover: allTurnover,
+            allPe: allPe,
+            allRsi: allRsi,
+            allMargin: allMargin,
             dates: dates180,
             scores: scores180,
             closes: closes180,
@@ -928,7 +1013,8 @@ var App = (function () {
         var ec = d.emotionColor || "#34C759";
         var el = d.emotion || "中性";
 
-        var html = '<button class="detail-back" onclick="App.switchTab(\'home\')">← 返回</button>';
+        DETAIL_FROM_TAB = (CURRENT_TAB === "detail") ? "home" : CURRENT_TAB;
+        var html = '<button class="detail-back" onclick="App.switchTab(\'' + DETAIL_FROM_TAB + '\')">← 返回</button>';
         html += '<div class="page-title">' + x.display + ' <span style="font-size:13px;font-weight:400;color:#86868B">' + x.ifind + '</span></div>';
 
         // 温度条
@@ -942,8 +1028,13 @@ var App = (function () {
         if (d.ret !== null) html += '<div class="c ' + (d.ret >= 0 ? "up" : "dn") + '">' + (d.ret >= 0 ? "+" : "") + d.ret + '%</div>';
         html += '</div></div>';
 
+        // 温度因子明细（当前日期 + 前日对比，随全局日期回溯）
+        html += '<div class="d-section" id="factorSection"><h3>温度因子明细 <span id="factorDate" style="font-weight:400;font-size:11px;color:#86868B"></span></h3>';
+        html += '<div style="max-height:260px;overflow-y:auto;-webkit-overflow-scrolling:touch">';
+        html += '<table class="factor-table"><thead><tr><th>因子</th><th>百分位</th><th>前日</th><th>变化</th><th>当前值</th></tr></thead><tbody id="factorBody"></tbody></table></div></div>';
+
         // 走势图（去掉滑轨，手势与数据Tab统一）
-        html += '<div class="d-section" id="detailChartSection"><h3>市场温度 & ' + x.display + '走势<button class="chart-view-btn" onclick="App.toggleChartLandscape(\'detail\')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom(\'detail\')" title="重置缩放" aria-label="重置缩放">⟲</button></h3><div class="d-chart"><canvas id="detailChart"></canvas></div><p style="font-size:11px;color:#86868B;margin-top:4px">单指查看每日数值，双指拖动平移、捏合缩放。</p></div>';
+        html += '<div class="d-section" id="detailChartSection"><h3>市场温度 & ' + x.display + '走势<button class="chart-view-btn" onclick="App.toggleChartLandscape(\'detail\')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom(\'detail\')" title="重置缩放" aria-label="重置缩放">⟲</button></h3><div class="d-chart"><canvas id="detailChart"></canvas></div><p style="font-size:11px;color:#86868B;margin-top:4px">单指左右拖动平移/查看，双指捏合缩放，上下滑动页面。</p></div>';
 
         // 近30个交易日温度日历（只显示交易日，无周末）
         html += '<div class="d-section"><h3>近30个交易日温度</h3>';
@@ -966,7 +1057,7 @@ var App = (function () {
         document.getElementById("detailContent").innerHTML = html;
         switchTab("detail");
 
-        setTimeout(function () { renderCalendar(d); renderYearTable(d); }, 10);
+        setTimeout(function () { renderCalendar(d); renderYearTable(d); renderFactorTable(); }, 10);
 
         DETAIL_CODE = code;
         setTimeout(function () { renderDetailChart(); }, 80);
@@ -1044,7 +1135,6 @@ var App = (function () {
         var ctx = document.getElementById("detailChart");
         if (!ctx || !base || !base.allDates || !x) return;
         if (DETAIL_CHART) { DETAIL_CHART.destroy(); DETAIL_CHART = null; }
-        destroyHammerManagers();
         var state = ensureChartRange("detail", base.allDates.length);
         var dates = base.allDates.slice(state.start, state.end + 1);
         var scores = base.allScores.slice(state.start, state.end + 1);
@@ -1057,7 +1147,6 @@ var App = (function () {
             ] },
             options: chartLineOptions("市场温度（℃）", x.display + "点位", true),
         });
-        setupTwoFingerGestures(DETAIL_CHART, ctx);
     }
 
     function renderSingleDataChart(key) {
@@ -1072,6 +1161,8 @@ var App = (function () {
         if (key === "margin") renderMarginChart(CHART_DATA.margin || []);
         if (key === "marginFlow") renderMarginFlowChart(CHART_DATA.margin || []);
         if (key === "etf") renderEtfChart(CHART_DATA.etf || { rows: [] });
+        if (key === "coldCount") renderColdCountChart(buildZoneCountSeries());
+        if (key === "hotCount") renderHotCountChart(buildZoneCountSeries());
     }
 
     // ━━━ 30个交易日温度日历（仅交易日，5列×6行）━━━
@@ -1101,6 +1192,46 @@ var App = (function () {
         }
 
         container.innerHTML = html;
+    }
+
+    // ━━━ 温度因子明细表 ━━━
+    function factorRow(name, pctArr, rawArr, i, prevI, fmt) {
+        var v = pctArr && pctArr[i] !== null && pctArr[i] !== undefined ? pctArr[i] : null;
+        var pv = pctArr && prevI >= 0 && pctArr[prevI] !== null && pctArr[prevI] !== undefined ? pctArr[prevI] : null;
+        var raw = rawArr && rawArr[i] !== null && rawArr[i] !== undefined ? rawArr[i] : null;
+        var diff = (v !== null && pv !== null) ? Math.round((v - pv) * 10) / 10 : null;
+        return '<tr><td>' + name + '</td>' +
+            '<td>' + (v !== null ? v.toFixed(1) : '—') + '</td>' +
+            '<td>' + (pv !== null ? pv.toFixed(1) : '—') + '</td>' +
+            '<td class="' + (diff === null ? '' : (diff >= 0 ? 'pos' : 'neg')) + '">' +
+            (diff === null ? '—' : (diff >= 0 ? '+' : '') + diff.toFixed(1)) + '</td>' +
+            '<td>' + (raw !== null ? fmt(raw) : '—') + '</td></tr>';
+    }
+
+    function renderFactorTable() {
+        var base = DETAIL_CODE ? DATA[DETAIL_CODE] : null;
+        var body = document.getElementById("factorBody");
+        var dateEl = document.getElementById("factorDate");
+        if (!body || !base || !base.allDates) return;
+        var endIndex = SELECTED_DATE
+            ? findClosestTradeIdx(base.allDates, SELECTED_DATE)
+            : (base.validIdx !== undefined ? base.validIdx : base.allDates.length - 1);
+        var prevI = endIndex - 1;
+        if (dateEl) dateEl.textContent = endIndex >= 0 ? " · " + base.allDates[endIndex] : "";
+        if (!base.factorClose || !base.factorClose.length) {
+            body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#AEAEB2;font-weight:400">封存数据暂不含因子明细，联网刷新后可见</td></tr>';
+            return;
+        }
+        var hasMargin = false;
+        for (var i = 0; i < (base.factorMargin || []).length; i++) {
+            if (base.factorMargin[i] !== null) { hasMargin = true; break; }
+        }
+        var html = factorRow("收盘价百分位", base.factorClose, base.allCloses, endIndex, prevI, function (x) { return String(Math.round(x * 100) / 100); });
+        html += factorRow("换手率百分位", base.factorTurnover, base.allTurnover, endIndex, prevI, function (x) { return x.toFixed(2) + "%"; });
+        html += factorRow("PE TTM百分位", base.factorPe, base.allPe, endIndex, prevI, function (x) { return x.toFixed(2); });
+        html += factorRow("RSI百分位", base.factorRsi, base.allRsi, endIndex, prevI, function (x) { return x.toFixed(1); });
+        if (hasMargin) html += factorRow("融资余额百分位", base.factorMargin, base.allMargin, endIndex, prevI, function (x) { return x.toFixed(2); });
+        body.innerHTML = html;
     }
 
     // ━━━ 近1年数据表格 ━━━
@@ -1266,12 +1397,26 @@ var App = (function () {
             : mergeChartRows(newRows, oldRows);
     }
 
+    function recomputeMarginPeakDrawdown(rows) {
+        var sorted = (rows || []).slice().sort(function (a, b) { return (a.date || "").localeCompare(b.date || ""); });
+        var peak = null;
+        sorted.forEach(function (row) {
+            if (row.balance !== null && row.balance !== undefined && !isNaN(row.balance)) {
+                peak = peak === null ? row.balance : Math.max(peak, row.balance);
+            }
+            row.peak = peak;
+            row.drawdown = (peak !== null && row.balance !== null && row.balance !== undefined && !isNaN(row.balance))
+                ? Math.max(0, peak - row.balance) : null;
+        });
+        return sorted;
+    }
+
     function mergeChartData(base, fresh) {
         base = base || {};
         fresh = fresh || {};
         return {
             market: mergeChartRowsByFreshness(chartRows(base, "market"), chartRows(fresh, "market")),
-            margin: mergeChartRowsByFreshness(chartRows(base, "margin"), chartRows(fresh, "margin")),
+            margin: recomputeMarginPeakDrawdown(mergeChartRowsByFreshness(chartRows(base, "margin"), chartRows(fresh, "margin"))),
             etf: { rows: mergeChartRowsByFreshness(chartRows(base, "etf"), chartRows(fresh, "etf")) },
             updated_at: fresh.updated_at || base.updated_at || "",
             _checkedAt: fresh._checkedAt || base._checkedAt || 0,
@@ -1314,6 +1459,7 @@ var App = (function () {
     function fetchChartDataFromAPI(base) {
         var IS_ANDROID = !!(window.Android && window.Android.isAndroid && window.Android.isAndroid());
         if (!IS_ANDROID) return Promise.reject(new Error("not android"));
+        if (!hasLiveToken()) return Promise.reject(new Error("NO_TOKEN"));
 
         var startDate = new Date();
         startDate.setDate(startDate.getDate() - 365 * 2 - 30);
@@ -1454,7 +1600,8 @@ var App = (function () {
         var dataPromise;
         if (IS_FROZEN_BUILD && !force) {
             dataPromise = loadChartText("data/chart_data.json").then(function (text) {
-                return JSON.parse(text);
+                // 冻结版也要读回本地图表快照，避免刷新过的图表在重开后退回内置
+                return mergeChartData(JSON.parse(text), loadChartSnapshot());
             });
         } else if (IS_ANDROID && window.Android.fetchDateSequence) {
             dataPromise = loadChartText("data/chart_data.json").then(function (text) {
@@ -1501,7 +1648,6 @@ var App = (function () {
     }
 
     function destroyDataCharts() {
-        destroyHammerManagers();
         Object.keys(DATA_CHARTS).forEach(function (key) {
             if (DATA_CHARTS[key]) DATA_CHARTS[key].destroy();
         });
@@ -1529,7 +1675,7 @@ var App = (function () {
                 legend: { labels: { usePointStyle: true, pointStyle: "circle", padding: 12, color: "#344054", font: { size: 10, weight: "600" } } },
                 tooltip: { backgroundColor: "rgba(15,23,42,.92)", padding: 10, cornerRadius: 8, displayColors: true, titleFont: { size: 11 }, bodyFont: { size: 10 } },
                 zoom: {
-                    pan: { enabled: false },
+                    pan: { enabled: true, mode: "x", threshold: 8 },
                     zoom: { wheel: { enabled: false }, pinch: { enabled: true }, mode: "x" },
                     limits: { x: { minRange: 10 } },
                 },
@@ -1539,49 +1685,6 @@ var App = (function () {
 
     function dataChartOptions(yLabel, y1Label, xRange) {
         return chartLineOptions(yLabel, y1Label, false, xRange);
-    }
-
-    // ━━━ 双指手势：pinch 缩放 + 2指平移（单指留给 tooltip）━━━
-    function setupTwoFingerGestures(chart, canvas) {
-        if (!window.Hammer || !chart || !canvas) return;
-        try {
-            var mc = new Hammer.Manager(canvas, { touchAction: "none" });
-            var pan = new Hammer.Pan({ event: "pan", pointers: 2, threshold: 5 });
-            var pinch = new Hammer.Pinch({ event: "pinch", threshold: 0.05 });
-            mc.add([pan, pinch]);
-            pinch.recognizeWith(pan);
-
-            var lastX = 0;
-            var isPinching = false;
-
-            mc.on("panstart", function () {
-                if (!isPinching) lastX = 0;
-            });
-            mc.on("pan", function (e) {
-                if (isPinching) return;  // pinch 进行中，抑制 pan
-                var deltaX = e.deltaX - lastX;
-                lastX = e.deltaX;
-                if (deltaX !== 0 && chart.pan) {
-                    // 向右拖看更早数据（方向取反与数据轴一致）
-                    chart.pan({ x: -deltaX }, undefined, "x");
-                }
-            });
-
-            mc.on("pinchstart", function () {
-                isPinching = true;
-            });
-            mc.on("pinchend", function () {
-                // 延迟恢复 pan，避免手指抬起瞬间误触发
-                setTimeout(function () { isPinching = false; }, 150);
-            });
-
-            HAMMER_MANAGERS.push(mc);
-        } catch (e) { /* Hammer not available */ }
-    }
-
-    function destroyHammerManagers() {
-        HAMMER_MANAGERS.forEach(function (mc) { try { mc.destroy(); } catch (e) {} });
-        HAMMER_MANAGERS = [];
     }
 
     function renderMarketChart(rows) {
@@ -1604,7 +1707,6 @@ var App = (function () {
             },
             options: dataChartOptions("指数点位", "成交额（亿元）", xRange),
         });
-        setupTwoFingerGestures(DATA_CHARTS.market, document.querySelector("#marketChart"));
     }
 
     function renderMarginChart(rows) {
@@ -1620,7 +1722,6 @@ var App = (function () {
             ] },
             options: dataChartOptions("融资余额（亿元）", "当前回撤（亿元）", xRange),
         });
-        setupTwoFingerGestures(DATA_CHARTS.margin, document.querySelector("#marginChart"));
     }
 
     function renderMarginFlowChart(rows) {
@@ -1634,7 +1735,6 @@ var App = (function () {
             ] },
             options: dataChartOptions("单日净买入（亿元）", "融资余额（亿元）", xRange),
         });
-        setupTwoFingerGestures(DATA_CHARTS.marginFlow, document.querySelector("#marginFlowChart"));
     }
 
     function renderEtfChart(etf) {
@@ -1658,7 +1758,62 @@ var App = (function () {
             data: { labels: labels, datasets: datasets },
             options: dataChartOptions("净流入（亿元）", null, xRange),
         });
-        setupTwoFingerGestures(DATA_CHARTS.etf, document.querySelector("#etfChart"));
+    }
+
+    // 每日处于冰点(<10)/狂热(≥90)状态的指数数量走势（冻结/在线两种模式都基于 DATA）
+    function buildZoneCountSeries() {
+        var byDate = {};
+        var allDates = [];
+        Object.keys(DATA).forEach(function (code) {
+            var d = DATA[code];
+            if (!d || !d.allDates || !d.allScores) return;
+            for (var i = 0; i < d.allDates.length; i++) {
+                var s = d.allScores[i];
+                if (s === null || s === undefined) continue;
+                var dt = d.allDates[i];
+                if (!byDate[dt]) { byDate[dt] = { cold: 0, hot: 0 }; allDates.push(dt); }
+                if (s < 10) byDate[dt].cold++;
+                if (s >= 90) byDate[dt].hot++;
+            }
+        });
+        allDates.sort();
+        return {
+            dates: allDates,
+            cold: allDates.map(function (dt) { return byDate[dt].cold; }),
+            hot: allDates.map(function (dt) { return byDate[dt].hot; }),
+        };
+    }
+
+    function renderZoneCountChart(key, series, label, borderColor, fillColor) {
+        var rows = series || buildZoneCountSeries();
+        var winSize = Math.min(180, rows.dates.length);
+        var xRange = { min: Math.max(0, rows.dates.length - winSize), max: rows.dates.length - 1 };
+        DATA_CHARTS[key] = new Chart(document.getElementById(key + "Chart"), {
+            type: "line",
+            data: {
+                labels: rows.dates.map(function (dt) { return dt.slice(5); }),
+                datasets: [{
+                    label: label,
+                    data: key === "coldCount" ? rows.cold : rows.hot,
+                    borderColor: borderColor,
+                    backgroundColor: fillColor,
+                    borderWidth: 2.2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    tension: 0.25,
+                    fill: true,
+                }],
+            },
+            options: dataChartOptions("数量（个）", null, xRange),
+        });
+    }
+
+    function renderColdCountChart(series) {
+        renderZoneCountChart("coldCount", series, "冰点数量（<10）", "#007AFF", "rgba(0,122,255,0.10)");
+    }
+
+    function renderHotCountChart(series) {
+        renderZoneCountChart("hotCount", series, "狂热数量（≥90）", "#FF3B30", "rgba(255,59,48,0.10)");
     }
 
     function renderDataCharts() {
@@ -1678,6 +1833,9 @@ var App = (function () {
         renderMarginChart(CHART_DATA.margin || []);
         renderMarginFlowChart(CHART_DATA.margin || []);
         renderEtfChart(CHART_DATA.etf || { rows: [] });
+        var zone = buildZoneCountSeries();
+        renderColdCountChart(zone);
+        renderHotCountChart(zone);
         if (status) status.style.display = "none";
         var update = document.getElementById("dataUpdatedAt");
         if (update && CHART_DATA.market && CHART_DATA.market.length) {
@@ -1691,9 +1849,7 @@ var App = (function () {
     function openDataPage() {
         var status = document.getElementById("dataChartStatus");
         if (status && !CHART_DATA) status.style.display = "block";
-        loadChartData().then(function () {
-            renderDataCharts();
-        }).catch(function () {});
+        loadChartData().catch(function () {});
     }
 
     // ━━━ 融资余额每日净买入列表 ━━━
@@ -1724,7 +1880,7 @@ var App = (function () {
             th("date", "日期") + th("balance", "融资余额(亿)") + th("net_buy", "净买入(亿)") +
             "</tr></thead><tbody>";
         display.forEach(function (row) {
-            var cls = row.net_buy >= 0 ? "pos" : "neg";
+            var cls = row.net_buy === null ? "" : (row.net_buy >= 0 ? "pos" : "neg");
             var nb = row.net_buy !== null ? (row.net_buy >= 0 ? "+" : "") + row.net_buy.toFixed(2) : "—";
             var bal = row.balance !== null ? row.balance.toFixed(2) : "—";
             html += '<tr><td>' + row.date + '</td><td>' + bal + '</td><td class="' + cls + '">' + nb + '</td></tr>';
@@ -1745,10 +1901,14 @@ var App = (function () {
     }
 
     function refreshChartData() {
+        if (IS_FROZEN_BUILD && !hasLiveToken()) {
+            showToast("封存版未设置iFinD Token，图表仅显示封存数据");
+            return;
+        }
         showToast("正在刷新图表数据...");
-        loadChartData(true).then(function () {
-            renderDataCharts();
-            showToast("图表数据已更新");
+        var before = CHART_DATA ? latestChartDate(CHART_DATA, "market") : "";
+        loadChartData(true).then(function (data) {
+            showToast(latestChartDate(data, "market") > before ? "图表数据已更新" : "图表数据已是最新");
         }).catch(function () {
             showToast("图表数据更新失败");
         });
@@ -2099,7 +2259,6 @@ var App = (function () {
                     input.value = "";
                     checkTokenStatus();
                     clearDataSnapshot();
-                    DATA = {};
                     fetchLocal(true);
                 } else {
                     showToast("❌ " + (res.error || "更新失败"));
@@ -2232,8 +2391,19 @@ var App = (function () {
             '<div style="font-size:12px;color:#86868B">近30个交易日温度 · ' + ds + '</div>' +
             '</div>' +
             '<div style="width:100%;height:16px;border-radius:8px;margin-bottom:4px;background:linear-gradient(to right,#007AFF 0%,#007AFF 10%,#5AC8FA 10%,#5AC8FA 20%,#34C759 20%,#34C759 80%,#FF9500 80%,#FF9500 90%,#FF3B30 90%,#FF3B30 100%)"></div>' +
-            '<div style="display:flex;justify-content:space-between;font-size:8px;color:#86868B;margin-bottom:6px">' +
-            '<span>0</span><span>10</span><span>20</span><span>80</span><span>90</span><span>100</span></div>' +
+            '<div style="position:relative;height:12px;margin-top:2px;font-size:9px;color:#86868B">' +
+            '<span style="position:absolute;left:0%;transform:translateX(-50%)">0</span>' +
+            '<span style="position:absolute;left:10%;transform:translateX(-50%)">10</span>' +
+            '<span style="position:absolute;left:20%;transform:translateX(-50%)">20</span>' +
+            '<span style="position:absolute;left:80%;transform:translateX(-50%)">80</span>' +
+            '<span style="position:absolute;left:90%;transform:translateX(-50%)">90</span>' +
+            '<span style="position:absolute;left:100%;transform:translateX(-50%)">100</span></div>' +
+            '<div style="position:relative;height:14px;margin-top:2px;font-size:9px;font-weight:500">' +
+            '<span style="position:absolute;left:5%;transform:translateX(-50%);color:#007AFF">冰点</span>' +
+            '<span style="position:absolute;left:15%;transform:translateX(-50%);color:#5AC8FA">恐惧</span>' +
+            '<span style="position:absolute;left:50%;transform:translateX(-50%);color:#34C759">中性</span>' +
+            '<span style="position:absolute;left:85%;transform:translateX(-50%);color:#FF9500">贪婪</span>' +
+            '<span style="position:absolute;left:95%;transform:translateX(-50%);color:#FF3B30">狂热</span></div>' +
             '<div style="font-size:11px;font-weight:600;color:#86868B;margin:8px 0 6px">近30个交易日</div>' +
             '<div id="calPosterGrid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;flex:1;align-content:space-between"></div>' +
             '<div style="text-align:center;margin-top:10px;font-size:10px;color:#86868B">今日市场情绪播报 | 投资有风险，入市需谨慎</div>' +
@@ -2257,7 +2427,7 @@ var App = (function () {
                     var ec = score !== null ? tempColor(score) : "#E5E5EA";
                     var textClass = (ec === "#5AC8FA" || ec === "#34C759") ? "dt" : "lt";
                     var cell = document.createElement("div");
-                    cell.style.cssText = "border-radius:8px;padding:6px 3px;text-align:center;display:flex;flex-direction:column;justify-content:center;background:" + ec + ";color:" + (textClass === "dt" ? "#1D1D1F" : "#fff") + ";min-height:52px";
+                    cell.style.cssText = "border-radius:8px;padding:6px 3px;text-align:center;display:flex;flex-direction:column;justify-content:center;background:" + ec + ";color:" + (textClass === "dt" ? "#1D1D1F" : "#fff") + ";min-height:44px";
                     cell.innerHTML =
                         '<div style="font-size:9px;font-weight:500;line-height:1">' + monthLabel + '/' + dayLabel + '</div>' +
                         '<div style="font-size:12px;font-weight:700;line-height:1">' + (score !== null ? score : '-') + '</div>';
@@ -2358,9 +2528,6 @@ var App = (function () {
                 button.title = "退出横屏查看";
                 button.setAttribute("aria-label", "退出横屏查看");
             }
-            ACTIVE_CHART_LANDSCAPE = key;
-        } else {
-            ACTIVE_CHART_LANDSCAPE = null;
         }
 
         if (window.Android && window.Android.setLandscape) {
