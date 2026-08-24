@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>指数温度计</title>
+<title>指数拥挤度</title>
 <script src="js/vendor/html2canvas.min.js"></script>
 <script src="js/vendor/chart.umd.min.js"></script>
 <script src="js/vendor/hammer.min.js"></script>
@@ -61,7 +61,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
 .poster-header h2{font-size:26px;font-weight:700;color:#1D1D1F}
 .poster-header .date{font-size:12px;color:#86868B;margin-top:1px}
 
-/* 温度条 */
+/* 指数拥挤度条 */
 .temp-bar{width:100%;height:16px;border-radius:8px;background:linear-gradient(to right,#007AFF 0%,#007AFF 10%,#5AC8FA 10%,#5AC8FA 20%,#34C759 20%,#34C759 80%,#FF9500 80%,#FF9500 90%,#FF3B30 90%,#FF3B30 100%)}
 .temp-nums{position:relative;height:12px;margin-top:2px;font-size:9px;color:#86868B}
 .temp-nums span{position:absolute;transform:translateX(-50%)}
@@ -165,7 +165,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
 /* 详情页 */
 .detail-back{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;border-radius:10px;background:#fff;border:none;font-size:13px;font-weight:500;cursor:pointer;color:#007AFF;font-family:inherit;box-shadow:0 1px 4px rgba(0,0,0,0.06);margin-bottom:10px}
 
-/* 详情温度条 */
+/* 详情指数拥挤度条 */
 .d-temp-bar{background:#fff;border-radius:14px;padding:14px;margin-bottom:10px;box-shadow:0 2px 8px rgba(0,0,0,0.04)}
 .d-bar{width:100%;height:20px;border-radius:10px;background:linear-gradient(to right,#007AFF 0%,#007AFF 10%,#5AC8FA 10%,#5AC8FA 20%,#34C759 20%,#34C759 80%,#FF9500 80%,#FF9500 90%,#FF3B30 90%,#FF3B30 100%)}
 .d-nums{position:relative;height:14px;margin-top:4px;font-size:10px;color:#86868B}
@@ -276,7 +276,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
         <!-- ===== 主页：海报 ===== -->
         <div class="page active" id="pageHome">
             <div style="position:relative">
-                <div class="page-title">指数温度计 <span class="page-subtitle" id="homeDate"></span></div>
+                <div class="page-title">指数拥挤度 <span class="page-subtitle" id="homeDate"></span></div>
                 <button class="refresh-btn" onclick="App.refreshData()" title="刷新数据" aria-label="刷新数据">↻</button>
                 <button class="settings-btn" onclick="App.openSettings()">⚙️</button>
             </div>
@@ -294,7 +294,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
             <div class="poster-card" id="posterLight">
                 <div class="poster-inner">
                     <div class="poster-header">
-                        <h2>指数温度计</h2>
+                        <h2>指数拥挤度</h2>
                         <div class="date" id="posterDate2"></div>
                     </div>
                     <div class="temp-bar"></div>
@@ -312,13 +312,13 @@ body{touch-action:pan-y;overscroll-behavior:none}
                     </div>
                 </div>
             </div>
-            <button class="dl-btn" onclick="App.downloadPoster('posterLight','指数温度计_站在光里')">📥 下载站在光里海报</button>
+            <button class="dl-btn" onclick="App.downloadPoster('posterLight','指数拥挤度_站在光里')">📥 下载站在光里海报</button>
 
             <!-- 海报3：主要指数+主题行业 合并 -->
             <div class="poster-card" id="posterCombined">
                 <div class="poster-inner">
                     <div class="poster-header">
-                        <h2>指数温度计</h2>
+                        <h2>指数拥挤度</h2>
                         <div class="date" id="posterDate5"></div>
                     </div>
                     <div class="temp-bar"></div>
@@ -338,13 +338,13 @@ body{touch-action:pan-y;overscroll-behavior:none}
                     </div>
                 </div>
             </div>
-            <button class="dl-btn" onclick="App.downloadPoster('posterCombined','指数温度计_主要指数+SmartBeta')">📥 下载主要指数+SmartBeta海报</button>
+            <button class="dl-btn" onclick="App.downloadPoster('posterCombined','指数拥挤度_主要指数+SmartBeta')">📥 下载主要指数+SmartBeta海报</button>
 
             <!-- 海报4：主题行业 -->
             <div class="poster-card" id="posterSector">
                 <div class="poster-inner">
                     <div class="poster-header">
-                        <h2>指数温度计</h2>
+                        <h2>指数拥挤度</h2>
                         <div class="date" id="posterDate3"></div>
                     </div>
                     <div class="temp-bar"></div>
@@ -362,9 +362,9 @@ body{touch-action:pan-y;overscroll-behavior:none}
                     </div>
                 </div>
             </div>
-            <button class="dl-btn" onclick="App.downloadPoster('posterSector','指数温度计_主题行业')">📥 下载主题行业海报</button>
+            <button class="dl-btn" onclick="App.downloadPoster('posterSector','指数拥挤度_主题行业')">📥 下载主题行业海报</button>
 
-            <!-- 海报5：连续5日冰点板块（温度<10） -->
+            <!-- 海报5：连续5日冰点板块（指数拥挤度<10） -->
             <div class="poster-card" id="posterExtremeCold">
                 <div class="poster-inner">
                     <div class="poster-header">
@@ -377,7 +377,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
                         <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
                     </div>
                     <div class="poster-body">
-                        <div class="section-title" style="color:#007AFF" id="coldPosterTitle">连续5日温度 &lt; 10</div>
+                        <div class="section-title" style="color:#007AFF" id="coldPosterTitle">连续5日指数拥挤度 &lt; 10</div>
                         <div id="coldPosterGrid"></div>
                     </div>
                     <div class="poster-footer">
@@ -386,9 +386,9 @@ body{touch-action:pan-y;overscroll-behavior:none}
                     </div>
                 </div>
             </div>
-            <button class="dl-btn" onclick="App.downloadPoster('posterExtremeCold','指数温度计_冰点板块')">📥 下载冰点板块海报</button>
+            <button class="dl-btn" onclick="App.downloadPoster('posterExtremeCold','指数拥挤度_冰点板块')">📥 下载冰点板块海报</button>
 
-            <!-- 海报7：连续5日狂热板块（温度>90） -->
+            <!-- 海报7：连续5日狂热板块（指数拥挤度>90） -->
             <div class="poster-card" id="posterExtremeHot">
                 <div class="poster-inner">
                     <div class="poster-header">
@@ -401,7 +401,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
                         <span class="tl1">冰点</span><span class="tl2">恐惧</span><span class="tl3">中性</span><span class="tl4">贪婪</span><span class="tl5">狂热</span>
                     </div>
                     <div class="poster-body">
-                        <div class="section-title" style="color:#FF3B30" id="hotPosterTitle">连续5日温度 &gt; 90</div>
+                        <div class="section-title" style="color:#FF3B30" id="hotPosterTitle">连续5日指数拥挤度 &gt; 90</div>
                         <div id="hotPosterGrid"></div>
                     </div>
                     <div class="poster-footer">
@@ -410,7 +410,7 @@ body{touch-action:pan-y;overscroll-behavior:none}
                     </div>
                 </div>
             </div>
-            <button class="dl-btn" onclick="App.downloadPoster('posterExtremeHot','指数温度计_狂热板块')">📥 下载狂热板块海报</button>
+            <button class="dl-btn" onclick="App.downloadPoster('posterExtremeHot','指数拥挤度_狂热板块')">📥 下载狂热板块海报</button>
         </div>
 
         <!-- ===== 全部指数Tab ===== -->
@@ -464,13 +464,13 @@ body{touch-action:pan-y;overscroll-behavior:none}
                     <div class="data-chart"><canvas id="etfChart"></canvas></div>
                 </section>
                 <section class="data-section" id="dataSection-coldCount">
-                    <h3>冰点板块数量走势（温度&lt;10）<button class="chart-view-btn" onclick="App.toggleChartLandscape('coldCount')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom('coldCount')" title="重置缩放" aria-label="重置缩放">⟲</button></h3>
-                    <p>单指左右拖动平移/查看，双指捏合缩放，上下滑动页面。每日温度&lt;10（冰点）的指数数量。</p>
+                    <h3>冰点板块数量走势（指数拥挤度&lt;10）<button class="chart-view-btn" onclick="App.toggleChartLandscape('coldCount')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom('coldCount')" title="重置缩放" aria-label="重置缩放">⟲</button></h3>
+                    <p>单指左右拖动平移/查看，双指捏合缩放，上下滑动页面。每日指数拥挤度&lt;10（冰点）的指数数量。</p>
                     <div class="data-chart"><canvas id="coldCountChart"></canvas></div>
                 </section>
                 <section class="data-section" id="dataSection-hotCount">
-                    <h3>狂热板块数量走势（温度≥90）<button class="chart-view-btn" onclick="App.toggleChartLandscape('hotCount')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom('hotCount')" title="重置缩放" aria-label="重置缩放">⟲</button></h3>
-                    <p>单指左右拖动平移/查看，双指捏合缩放，上下滑动页面。每日温度≥90（狂热）的指数数量。</p>
+                    <h3>狂热板块数量走势（指数拥挤度≥90）<button class="chart-view-btn" onclick="App.toggleChartLandscape('hotCount')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom('hotCount')" title="重置缩放" aria-label="重置缩放">⟲</button></h3>
+                    <p>单指左右拖动平移/查看，双指捏合缩放，上下滑动页面。每日指数拥挤度≥90（狂热）的指数数量。</p>
                     <div class="data-chart"><canvas id="hotCountChart"></canvas></div>
                 </section>
             </div>

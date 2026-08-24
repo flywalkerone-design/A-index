@@ -1,5 +1,5 @@
 """
-A股温度计 - browser proxy server
+指数拥挤度 - browser proxy server
 """
 
 import csv
@@ -255,7 +255,7 @@ def cache_status():
 
 if __name__ == "__main__":
     print("\n" + "=" * 50)
-    print("  A股温度计 - JS frontend + Python proxy")
+    print("  指数拥挤度 - JS frontend + Python proxy")
     print("  Frontend: http://localhost:5000")
     print("  API:      http://localhost:5000/api/*")
     print("  Cache:    data/index_cache/ + data/api_data_cache.json")

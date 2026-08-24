@@ -1,5 +1,5 @@
 /**
- * A股市场温度计 - 主应用逻辑
+ * 指数拥挤度 - 主应用逻辑
  *
  * Android: 直接调 iFinD API，完全本地运行
  * 浏览器: 通过 proxy.py 代理（开发模式）
@@ -22,15 +22,18 @@ var App = (function () {
     var CHART_OVERLAP_DAYS = 10;
     var CHART_RANGES = {};
     var DETAIL_CODE = null;
+    var DETAIL_FROM_TAB = "home";  // 详情页返回时回到来源 tab
     var MARGIN_SORT_KEY = "date";
     var MARGIN_SORT_ASC = false; // 默认日期倒序（最新在前）
     var POSTER_LAYOUT_KEY = "a_stock_poster_layout_v1";
     var POSTER_EDITING = false;
-    var ACTIVE_CHART_LANDSCAPE = null;
     var SELECTED_DATE = null;  // 日期回溯：选中的日期，null=最新
-    var DATA_CACHE_KEY = "a_stock_data_snapshot_v6";
+    var DATA_CACHE_KEY = "a_stock_data_snapshot_v7";
+    var CACHE_SNAPSHOT_DATA = null;   // 最近一次从缓存读出的快照
+    var CACHE_SNAPSHOT_DATE = "";     // 缓存快照最新数据日期
     var REFRESH_IN_PROGRESS = false;
-    var HAMMER_MANAGERS = [];  // chartjs-plugin-zoom 两指平移用的 Hammer 实例
+    var IS_FROZEN_BUILD = !!(window.Android && window.Android.isFrozenBuild && window.Android.isFrozenBuild());
+    var FROZEN_DATA_ASSET = "data/frozen_data_0815.json";
 
     // ━━━ 配置管理 ━━━
     var SK = "a_stock_cfg_v6";
@@ -202,26 +205,111 @@ var App = (function () {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 数据加载（前端本地计算）
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    function maxDataDate(data) {
+        var latest = "";
+        Object.keys(data || {}).forEach(function (code) {
+            var d = data[code];
+            if (!d || !d.allDates || !d.allScores) return;
+            var i = d.allDates.length - 1;
+            while (i >= 0 && (d.allScores[i] === null || d.allScores[i] === undefined)) i--;
+            if (i >= 0 && d.allDates[i] > latest) latest = d.allDates[i];
+        });
+        return latest;
+    }
+
+    function snapshotMaxDate(snapshot) {
+        var latest = "";
+        (snapshot && snapshot.indices || []).forEach(function (item) {
+            if (!item || !item.dates || !item.scores) return;
+            var i = item.dates.length - 1;
+            while (i >= 0 && (item.scores[i] === null || item.scores[i] === undefined)) i--;
+            if (i >= 0 && item.dates[i] > latest) latest = item.dates[i];
+        });
+        return latest;
+    }
+
     function loadDataSnapshot() {
+        CACHE_SNAPSHOT_DATA = null;
+        CACHE_SNAPSHOT_DATE = "";
         try {
             var raw = localStorage.getItem(DATA_CACHE_KEY);
             if (!raw) return false;
             var snapshot = JSON.parse(raw);
-            if (!snapshot || snapshot.version !== 1 || !snapshot.data) return false;
+            if (!snapshot || snapshot.version !== 2 || !snapshot.data) return false;
             var codes = Object.keys(snapshot.data);
             if (!codes.length) return false;
             DATA = snapshot.data;
+            CACHE_SNAPSHOT_DATA = snapshot.data;
+            CACHE_SNAPSHOT_DATE = maxDataDate(snapshot.data);
             return true;
         } catch (e) {
             return false;
         }
     }
 
+    function frozenItemToData(item) {
+        var dates = Array.isArray(item.dates) ? item.dates.slice() : [];
+        var scores = Array.isArray(item.scores) ? item.scores.slice() : [];
+        var closes = Array.isArray(item.closes) ? item.closes.slice() : [];
+        var validIdx = scores.length - 1;
+        while (validIdx >= 0 && (scores[validIdx] === null || scores[validIdx] === undefined)) validIdx--;
+        var startIdx = Math.max(0, dates.length - 180);
+        return {
+            code: item.code,
+            display: item.display,
+            group: item.group,
+            score: item.score,
+            state: item.state,
+            stateColor: item.stateColor,
+            emotion: item.emotion,
+            emotionColor: item.emotionColor,
+            close: item.close,
+            ret: item.ret,
+            rsi: item.rsi,
+            pe: item.pe,
+            amount: item.amount,
+            ma5: item.ma5,
+            ma20: item.ma20,
+            ma60: item.ma60,
+            ranks: item.ranks || {},
+            factorClose: item.rank_close || [],
+            factorTurnover: item.rank_turnover || [],
+            factorPe: item.rank_pe || [],
+            factorRsi: item.rank_rsi || [],
+            factorMargin: item.rank_margin || [],
+            allTurnover: item.turnover || [],
+            allPe: item.pe_series || [],
+            allRsi: item.rsi_series || [],
+            allMargin: item.margin_series || [],
+            validIdx: validIdx,
+            allDates: dates,
+            allScores: scores,
+            allCloses: closes,
+            allRet: Array.isArray(item.ret_series) ? item.ret_series.slice() : dates.map(function () { return null; }),
+            dates: dates.slice(startIdx),
+            scores: scores.slice(startIdx),
+            closes: closes.slice(startIdx),
+        };
+    }
+
+    function loadFrozenSnapshot() {
+        return loadChartText(FROZEN_DATA_ASSET).then(function (text) {
+            var snapshot = JSON.parse(text);
+            var next = {};
+            (snapshot.indices || []).forEach(function (item) {
+                if (item && item.code) next[item.code] = frozenItemToData(item);
+            });
+            if (!Object.keys(next).length) throw new Error("0815 封存快照为空");
+            DATA = next;
+            return snapshot;
+        });
+    }
+
     function saveDataSnapshot() {
         if (!Object.keys(DATA).length) return;
         try {
             localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({
-                version: 1,
+                version: 2,
                 savedAt: Date.now(),
                 data: DATA,
             }));
@@ -232,6 +320,8 @@ var App = (function () {
 
     function clearDataSnapshot() {
         try { localStorage.removeItem(DATA_CACHE_KEY); } catch (e) { /* ignore */ }
+        CACHE_SNAPSHOT_DATA = null;
+        CACHE_SNAPSHOT_DATE = "";
     }
 
     function renderCachedData() {
@@ -241,8 +331,43 @@ var App = (function () {
         if (CURRENT_TAB === "data" && CHART_DATA) renderDataCharts();
     }
 
+    function hasLiveToken() {
+        if (!window.Android) return true;  // 浏览器开发模式（proxy 持有 token）
+        if (window.Android.hasRefreshToken) {
+            try { return !!window.Android.hasRefreshToken(); } catch (e) { return false; }
+        }
+        return false;
+    }
+
     function fetchLocal(force) {
         force = !!force;
+        // 冻结版手动刷新必须有 token，否则会全走 API 且假报成功
+        if (IS_FROZEN_BUILD && force && !hasLiveToken()) {
+            showLoading(false);
+            showToast("封存版未设置iFinD Token，无法联网刷新");
+            return;
+        }
+        // The bundled 0815 snapshot avoids API calls on first launch and on
+        // ordinary app opens. A user-requested refresh still uses the normal
+        // incremental data pipeline.
+        if (IS_FROZEN_BUILD && !force) {
+            var hasCached = Object.keys(DATA).length > 0;
+            loadFrozenSnapshot().then(function (snapshot) {
+                // 缓存（用户刷新过）比内置快照新 → 保留缓存；否则用内置快照
+                var bundled = snapshotMaxDate(snapshot);
+                if (hasCached && CACHE_SNAPSHOT_DATA && CACHE_SNAPSHOT_DATE && bundled &&
+                    CACHE_SNAPSHOT_DATE >= bundled) {
+                    DATA = CACHE_SNAPSHOT_DATA;
+                }
+                renderCachedData();
+            }).catch(function (error) {
+                if (hasCached) { renderCachedData(); return; }
+                showLoading(false);
+                showToast("0815 封存数据加载失败");
+                console.error(error);
+            });
+            return;
+        }
         var hasData = Object.keys(DATA).length > 0;
         var latest = hasData ? latestDataDateStr() : "";
         var current = getLatestTradeDate();
@@ -267,6 +392,7 @@ var App = (function () {
         var completed = 0;
         var total = indexes.length;
         var errors = [];
+        var successCount = 0;
 
         function onDone() {
             completed++;
@@ -274,6 +400,10 @@ var App = (function () {
             if (completed >= total) {
                 REFRESH_IN_PROGRESS = false;
                 showLoading(false);
+                if (successCount === 0) {
+                    showToast(IS_FROZEN_BUILD ? "刷新失败，请检查Token或网络" : "数据获取失败，请检查网络");
+                    return;
+                }
                 SELECTED_DATE = null;
                 updateDatePickerMax();
                 renderAll();
@@ -293,6 +423,7 @@ var App = (function () {
                 .then(function (data) {
                     if (data) {
                         DATA[idx.code] = buildIndexResult(data, idx);
+                        successCount++;
                     } else {
                         errors.push(idx.code + ": 无数据");
                     }
@@ -303,6 +434,10 @@ var App = (function () {
                     onDone();
                 });
         });
+    }
+
+    function pct1(v) {
+        return v === null || v === undefined || isNaN(v) ? null : Math.round(v * 1000) / 10;
     }
 
     function buildIndexResult(data, idxConfig) {
@@ -339,6 +474,18 @@ var App = (function () {
             return r !== null ? Math.round(r * 100) / 100 : null;
         }) : null;
 
+        // 逐日因子序列（百分位 0-100，1 位小数），与 allDates 对齐，供详情页因子表回溯
+        var factorClose = data.rank_close ? data.rank_close.map(pct1) : null;
+        var factorTurnover = data.rank_turnover ? data.rank_turnover.map(pct1) : null;
+        var factorPe = data.rank_pe ? data.rank_pe.map(pct1) : null;
+        var factorRsi = data.rank_rsi ? data.rank_rsi.map(pct1) : null;
+        var factorMargin = data.rank_margin ? data.rank_margin.map(pct1) : null;
+        // 原始值序列（用于因子表"当前值"列）
+        var allTurnover = data.turnover_ratio ? data.turnover_ratio.slice() : null;
+        var allPe = data.pe ? data.pe.slice() : null;
+        var allRsi = data.RSI ? data.RSI.slice() : null;
+        var allMargin = data.margin_balance ? data.margin_balance.slice() : null;
+
         var chartLen = Math.min(180, n);
         var startIdx = n - chartLen;
         var dates180 = allDates.slice(startIdx);
@@ -368,6 +515,15 @@ var App = (function () {
             allScores: allScores,
             allCloses: allCloses,
             allRet: allRet,
+            factorClose: factorClose,
+            factorTurnover: factorTurnover,
+            factorPe: factorPe,
+            factorRsi: factorRsi,
+            factorMargin: factorMargin,
+            allTurnover: allTurnover,
+            allPe: allPe,
+            allRsi: allRsi,
+            allMargin: allMargin,
             dates: dates180,
             scores: scores180,
             closes: closes180,
@@ -381,7 +537,7 @@ var App = (function () {
         if (i < 0) {
             return {
                 code: idxData.code, display: idxData.display, group: idxData.group,
-                score: null, state: "暂无数据", stateColor: "#86868B", emotion: "暂无温度", emotionColor: "#86868B",
+                score: null, state: "暂无数据", stateColor: "#86868B", emotion: "暂无指数拥挤度", emotionColor: "#86868B",
                 close: null, ret: null, rsi: null, pe: null, amount: null, ma5: null, ma20: null, ma60: null,
                 ranks: {}, allDates: idxData.allDates, allScores: idxData.allScores,
                 allCloses: idxData.allCloses, allRet: idxData.allRet, dates: idxData.dates,
@@ -391,7 +547,7 @@ var App = (function () {
 
         var score = idxData.allScores[i];
         var scoreRounded = score !== null && score !== undefined ? score : null;
-        var emo = scoreRounded === null ? { label: "暂无温度", color: "#86868B" } : AppConfig.getEmotion(scoreRounded);
+        var emo = scoreRounded === null ? { label: "暂无指数拥挤度", color: "#86868B" } : AppConfig.getEmotion(scoreRounded);
 
         return {
             code: idxData.code,
@@ -482,7 +638,7 @@ var App = (function () {
         notices.forEach(function (el) {
             if (!el) return;
             el.style.display = show ? "block" : "none";
-            el.innerHTML = show ? "<strong>融资余额未更新</strong>，今日温度暂不出值。" : "";
+            el.innerHTML = show ? "<strong>融资余额未更新</strong>，今日指数拥挤度暂不出值。" : "";
         });
     }
 
@@ -587,8 +743,8 @@ var App = (function () {
     function ensurePosterLayout() {
         var page = document.getElementById("pageHome");
         if (!page) return;
-        var ids = ["posterCombined", "posterLight", "posterSmart", "posterSector", "posterExtremeCold", "posterExtremeHot"];
-        var oldDefaultOrder = ["posterLight", "posterCombined", "posterSector", "posterSmart", "posterExtremeCold", "posterExtremeHot"];
+        var ids = ["posterCombined", "posterLight", "posterSector", "posterExtremeCold", "posterExtremeHot"];
+        var oldDefaultOrder = ["posterLight", "posterCombined", "posterSector", "posterExtremeCold", "posterExtremeHot"];
         ids.forEach(function (id) {
             var card = document.getElementById(id);
             if (!card || card.parentElement.classList.contains("poster-item")) return;
@@ -683,43 +839,46 @@ var App = (function () {
 
         updateMarginNotice();
         setText("homeDate", ds);
-        ["posterDate2", "posterDate3", "posterDate4", "posterDate5", "posterDate6", "posterDate7"].forEach(function (id) {
+        ["posterDate2", "posterDate3", "posterDate5", "posterDate6", "posterDate7"].forEach(function (id) {
             setText(id, ds);
         });
 
         // 主要指数仍在合并海报中展示，主页不再单独保留一张主要指数海报。
-        var mainV = v.filter(function (x) { return x.group === "main" && DATA[x.code]; });
+        var mainV = v.filter(function (x) { return x.group === "main"; });
         // 海报：站在光里
-        var lightV = v.filter(function (x) { return x.group === "light" && DATA[x.code]; })
+        var lightV = v.filter(function (x) { return x.group === "light"; })
             .sort(function (a, b) {
                 var da = getDisplayData(a.code), db = getDisplayData(b.code);
                 return (da ? da.score : 0) - (db ? db.score : 0);
             });
         document.getElementById("lightGrid").innerHTML = renderBlockGridHtml(lightV);
 
-        // 海报3：主要指数+主题行业 合并
-        var secV = v.filter(function (x) { return x.group === "sector" && DATA[x.code]; })
+        // 海报3：主要指数 + Smart Beta（合并到同一张海报，均用小方块）
+        var secV = v.filter(function (x) { return x.group === "sector"; })
+            .sort(function (a, b) {
+                var da = getDisplayData(a.code), db = getDisplayData(b.code);
+                return (da ? da.score : 0) - (db ? db.score : 0);
+            });
+        var smartV = v.filter(function (x) { return x.group === "smartbeta"; })
             .sort(function (a, b) {
                 var da = getDisplayData(a.code), db = getDisplayData(b.code);
                 return (da ? da.score : 0) - (db ? db.score : 0);
             });
         document.getElementById("combinedMainGrid").innerHTML = mainV.map(function (x) {
             var d = getDisplayData(x.code);
-            if (!d) return '';
+            if (!d) {
+                return '<div class="g-block" style="background:#F2F2F7" onclick="App.showDetail(\'' + x.code + '\')"><div class="bn">' + x.display + '</div><div class="bt" style="color:#AEAEB2">暂无</div></div>';
+            }
             var ec = d.emotionColor || "#34C759";
             var tc = (ec === "#5AC8FA" || ec === "#34C759") ? "dt" : "lt";
             return '<div class="g-block ' + tc + '" style="background:' + ec + '" onclick="App.showDetail(\'' + x.code + '\')"><div class="bn">' + x.display + '</div><div class="bt">' + d.score + '</div></div>';
         }).join("");
-        document.getElementById("combinedSectorGrid").innerHTML = renderBlockGridHtml(secV);
+        document.getElementById("combinedSmartGrid").innerHTML = renderBlockGridHtml(smartV);
 
-        // 海报4：主题行业
+        // 海报4：主题行业（小方块展示全部主题行业）
         document.getElementById("sectorGrid").innerHTML = renderBlockGridHtml(secV);
 
-        // 海报5：SmartBeta
-        var smartV = v.filter(function (x) { return x.group === "smartbeta" && DATA[x.code]; });
-        document.getElementById("smartCards").innerHTML = renderCardListHtml(smartV);
-
-        // 海报6：连续5日冰点板块（温度<10）
+        // 海报6：连续5日冰点板块（指数拥挤度<10）
         var coldCount = extreme.cold.length;
         document.getElementById("coldPosterTitle").textContent =
             coldCount > 0 ? "连续5日冰点 · " + coldCount + "个板块" : "连续5日冰点";
@@ -727,7 +886,7 @@ var App = (function () {
             ? renderExtremeGridHtml(extreme.cold, "cold")
             : '<div style="text-align:center;color:#86868B;padding:20px;font-size:12px">当前无连续5日冰点板块</div>';
 
-        // 海报7：连续5日狂热板块（温度>90）
+        // 海报7：连续5日狂热板块（指数拥挤度>90）
         var hotCount = extreme.hot.length;
         document.getElementById("hotPosterTitle").textContent =
             hotCount > 0 ? "连续5日狂热 · " + hotCount + "个板块" : "连续5日狂热";
@@ -740,46 +899,37 @@ var App = (function () {
         var v = allVis();
         var extreme = findExtremeSectors(v);
 
-        var mainV = v.filter(function (x) { return x.group === "main" && DATA[x.code]; });
-        document.getElementById("allMain").innerHTML = renderCardListHtml(mainV);
+        var mainV = v.filter(function (x) { return x.group === "main"; });
+        document.getElementById("allMain").innerHTML = renderBlockGridHtml(mainV);
 
-        var lightV = v.filter(function (x) { return x.group === "light" && DATA[x.code]; })
+        var lightV = v.filter(function (x) { return x.group === "light"; })
             .sort(function (a, b) {
                 var da = getDisplayData(a.code), db = getDisplayData(b.code);
                 return (da ? da.score : 0) - (db ? db.score : 0);
             });
         document.getElementById("allLight").innerHTML = renderBlockGridHtml(lightV);
 
-        var secV = v.filter(function (x) { return x.group === "sector" && DATA[x.code]; })
+        var secV = v.filter(function (x) { return x.group === "sector"; })
             .sort(function (a, b) {
                 var da = getDisplayData(a.code), db = getDisplayData(b.code);
                 return (da ? da.score : 0) - (db ? db.score : 0);
             });
         document.getElementById("allSector").innerHTML = renderBlockGridHtml(secV);
 
-        var smartV = v.filter(function (x) { return x.group === "smartbeta" && DATA[x.code]; });
-        document.getElementById("allSmart").innerHTML = renderCardListHtml(smartV);
+        var smartV = v.filter(function (x) { return x.group === "smartbeta"; });
+        document.getElementById("allSmart").innerHTML = renderBlockGridHtml(smartV);
 
         // 极端板块（全部tab）
         document.getElementById("allExtreme").innerHTML = renderAllExtremeHtml(extreme);
     }
 
-    function renderCardListHtml(items) {
-        return items.map(function (x) {
-            var d = getDisplayData(x.code);
-            if (!d) return '';
-            var ec = d.emotionColor || "#34C759";
-            return '<div class="idx-card" onclick="App.showDetail(\'' + x.code + '\')">' +
-                '<div class="idx-name">' + x.display + '</div>' +
-                '<div class="idx-right"><div class="idx-temp" style="color:' + ec + '">' + d.score + '°</div>' +
-                '<div class="idx-tag" style="background:' + ec + '">' + (d.emotion || "中性") + '</div></div></div>';
-        }).join("");
-    }
-
     function renderBlockGridHtml(items) {
         return items.map(function (x) {
             var d = getDisplayData(x.code);
-            if (!d) return '';
+            if (!d) {
+                return '<div class="g-block" style="background:#F2F2F7" onclick="App.showDetail(\'' + x.code + '\')">' +
+                    '<div class="bn">' + x.display + '</div><div class="bt" style="color:#AEAEB2">暂无</div></div>';
+            }
             var ec = d.emotionColor || "#34C759";
             var tc = (ec === "#5AC8FA" || ec === "#34C759") ? "dt" : "lt";
             return '<div class="g-block ' + tc + '" style="background:' + ec + '" onclick="App.showDetail(\'' + x.code + '\')">' +
@@ -812,7 +962,7 @@ var App = (function () {
 
         if (extreme.cold.length > 0) {
             var coldCount = extreme.cold.length;
-            html += '<div class="section-title" style="color:#007AFF">❄️ 连续5日冰点（温度<10）· ' + coldCount + '个板块</div>';
+            html += '<div class="section-title" style="color:#007AFF">❄️ 连续5日冰点（指数拥挤度<10）· ' + coldCount + '个板块</div>';
             extreme.cold.forEach(function (e) {
                 html += '<div class="extreme-row" onclick="App.showDetail(\'' + e.config.code + '\')">';
                 html += '<div class="extreme-name">' + e.config.display + '</div>';
@@ -826,7 +976,7 @@ var App = (function () {
 
         if (extreme.hot.length > 0) {
             var hotCount = extreme.hot.length;
-            html += '<div class="section-title" style="color:#FF3B30;margin-top:12px">🔥 连续5日狂热（温度>90）· ' + hotCount + '个板块</div>';
+            html += '<div class="section-title" style="color:#FF3B30;margin-top:12px">🔥 连续5日狂热（指数拥挤度>90）· ' + hotCount + '个板块</div>';
             extreme.hot.forEach(function (e) {
                 html += '<div class="extreme-row" onclick="App.showDetail(\'' + e.config.code + '\')">';
                 html += '<div class="extreme-name">' + e.config.display + '</div>';
@@ -857,38 +1007,43 @@ var App = (function () {
         var ec = d.emotionColor || "#34C759";
         var el = d.emotion || "中性";
 
-        var html = '<button class="detail-back" onclick="App.switchTab(\'home\')">← 返回</button>';
+        DETAIL_FROM_TAB = (CURRENT_TAB === "detail") ? "home" : CURRENT_TAB;
+        var html = '<button class="detail-back" onclick="App.switchTab(\'' + DETAIL_FROM_TAB + '\')">← 返回</button>';
         html += '<div class="page-title">' + x.display + ' <span style="font-size:13px;font-weight:400;color:#86868B">' + x.ifind + '</span></div>';
 
-        // 温度条
+        // 指数拥挤度条
         html += '<div class="d-temp-bar"><div class="d-bar"></div>';
         html += '<div class="d-nums"><span style="left:0%">0</span><span style="left:10%">10</span><span style="left:20%">20</span><span style="left:80%">80</span><span style="left:90%">90</span><span style="left:100%">100</span></div>';
         html += '<div class="d-labels"><span class="dl1">冰点</span><span class="dl2">恐惧</span><span class="dl3">中性</span><span class="dl4">贪婪</span><span class="dl5">狂热</span></div></div>';
 
-        html += '<div class="d-cards"><div class="d-card"><div class="v" style="color:' + ec + '">' + (d.score === null ? "-" : d.score) + '℃</div><div class="l">市场温度</div></div>';
+        html += '<div class="d-cards"><div class="d-card"><div class="v" style="color:' + ec + '">' + (d.score === null ? "-" : d.score) + '</div><div class="l">指数拥挤度</div></div>';
         html += '<div class="d-card"><div class="v" style="color:' + ec + '">' + el + '</div><div class="l">市场状态</div></div>';
         html += '<div class="d-card"><div class="v" style="font-size:18px">' + d.close + '</div><div class="l">' + x.display + '收盘</div>';
         if (d.ret !== null) html += '<div class="c ' + (d.ret >= 0 ? "up" : "dn") + '">' + (d.ret >= 0 ? "+" : "") + d.ret + '%</div>';
         html += '</div></div>';
 
         // 走势图（去掉滑轨，手势与数据Tab统一）
-        html += '<div class="d-section" id="detailChartSection"><h3>市场温度 & ' + x.display + '走势<button class="chart-view-btn" onclick="App.toggleChartLandscape(\'detail\')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom(\'detail\')" title="重置缩放" aria-label="重置缩放">⟲</button></h3><div class="d-chart"><canvas id="detailChart"></canvas></div><p style="font-size:11px;color:#86868B;margin-top:4px">单指查看每日数值，双指拖动平移、捏合缩放。</p></div>';
+        html += '<div class="d-section" id="detailChartSection"><h3>指数拥挤度 & ' + x.display + '走势<button class="chart-view-btn" onclick="App.toggleChartLandscape(\'detail\')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom(\'detail\')" title="重置缩放" aria-label="重置缩放">⟲</button></h3><div class="d-chart"><canvas id="detailChart"></canvas></div><p style="font-size:11px;color:#86868B;margin-top:4px">单指左右拖动平移/查看，双指捏合缩放，上下滑动页面。</p></div>';
 
-        // 近30个交易日温度日历（只显示交易日，无周末）
-        html += '<div class="d-section"><h3>近30个交易日温度</h3>';
+        // 近30个交易日指数拥挤度日历（只显示交易日，无周末）
+        html += '<div class="d-section"><h3>近30个交易日指数拥挤度</h3>';
         html += '<div id="calPosterWrap">';
         html += '<div class="cal-trade-grid" id="calGrid"></div>';
         html += '</div>';
-        html += '<button class="dl-btn" style="margin-top:8px" onclick="App.downloadCalPoster()">📥 分享30日温度海报</button></div>';
+        html += '<button class="dl-btn" style="margin-top:8px" onclick="App.downloadCalPoster()">📥 分享30日指数拥挤度海报</button></div>';
 
         // 近1年数据表格
         html += '<div class="d-section"><h3>近1年数据 <span style="font-weight:400;font-size:11px;color:#86868B;float:right" id="sortHint">点击表头排序</span></h3>';
         html += '<div style="max-height:300px;overflow-y:auto;-webkit-overflow-scrolling:touch">';
         html += '<table class="d-table" id="yearTable"><thead><tr>' +
             '<th class="clickable" onclick="App.sortYearTable(\'date\')">日期 ▾</th>' +
-            '<th class="clickable" onclick="App.sortYearTable(\'temp\')">温度 ▾</th>' +
+            '<th class="clickable" onclick="App.sortYearTable(\'temp\')">指数拥挤度 ▾</th>' +
             '<th class="clickable" onclick="App.sortYearTable(\'close\')">收盘 ▾</th>' +
-            '<th class="clickable" onclick="App.sortYearTable(\'ret\')">涨跌幅 ▾</th>' +
+            '<th class="clickable" onclick="App.sortYearTable(\'ret\')">涨跌 ▾</th>' +
+            '<th class="clickable" onclick="App.sortYearTable(\'turnover\')">换手 ▾</th>' +
+            '<th class="clickable" onclick="App.sortYearTable(\'pe\')">PE ▾</th>' +
+            '<th class="clickable" onclick="App.sortYearTable(\'rsi\')">RSI ▾</th>' +
+            '<th class="clickable" onclick="App.sortYearTable(\'margin\')">融资亿 ▾</th>' +
             '</tr></thead><tbody id="yearTableBody"></tbody></table>';
         html += '</div></div>';
 
@@ -973,7 +1128,6 @@ var App = (function () {
         var ctx = document.getElementById("detailChart");
         if (!ctx || !base || !base.allDates || !x) return;
         if (DETAIL_CHART) { DETAIL_CHART.destroy(); DETAIL_CHART = null; }
-        destroyHammerManagers();
         var state = ensureChartRange("detail", base.allDates.length);
         var dates = base.allDates.slice(state.start, state.end + 1);
         var scores = base.allScores.slice(state.start, state.end + 1);
@@ -981,12 +1135,11 @@ var App = (function () {
         DETAIL_CHART = new Chart(ctx, {
             type: "line",
             data: { labels: dates.map(function (dt) { return dt.slice(5); }), datasets: [
-                { label: "市场温度", data: scores, borderColor: "#FF9500", backgroundColor: "rgba(255,149,0,.12)", fill: true, tension: .28, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.4, yAxisID: "y" },
+                { label: "指数拥挤度", data: scores, borderColor: "#FF9500", backgroundColor: "rgba(255,149,0,.12)", fill: true, tension: .28, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.4, yAxisID: "y" },
                 { label: x.display, data: closes, borderColor: "#007AFF", backgroundColor: "rgba(0,122,255,.05)", borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: .28, fill: true, yAxisID: "y1" },
             ] },
-            options: chartLineOptions("市场温度（℃）", x.display + "点位", true),
+            options: chartLineOptions("指数拥挤度", x.display + "点位", true),
         });
-        setupTwoFingerGestures(DETAIL_CHART, ctx);
     }
 
     function renderSingleDataChart(key) {
@@ -1001,9 +1154,11 @@ var App = (function () {
         if (key === "margin") renderMarginChart(CHART_DATA.margin || []);
         if (key === "marginFlow") renderMarginFlowChart(CHART_DATA.margin || []);
         if (key === "etf") renderEtfChart(CHART_DATA.etf || { rows: [] });
+        if (key === "coldCount") renderColdCountChart(buildZoneCountSeries());
+        if (key === "hotCount") renderHotCountChart(buildZoneCountSeries());
     }
 
-    // ━━━ 30个交易日温度日历（仅交易日，5列×6行）━━━
+    // ━━━ 30个交易日指数拥挤度日历（仅交易日，5列×6行）━━━
     function renderCalendar(base) {
         var container = document.getElementById("calGrid");
         if (!container || !base.allDates) return;
@@ -1024,7 +1179,7 @@ var App = (function () {
             if (score !== null) ec = tempColor(score);
             var textClass = (ec === "#5AC8FA" || ec === "#34C759") ? "dt" : "lt";
 
-            html += '<div class="cal-trade-cell ' + textClass + '" style="background:' + ec + '" title="' + dt + ': ' + (score !== null ? score + '℃' : '-') + '">' +
+            html += '<div class="cal-trade-cell ' + textClass + '" style="background:' + ec + '" title="' + dt + ': ' + (score !== null ? score + '' : '-') + '">' +
                 '<div class="cal-trade-label">' + monthLabel + '/' + dayLabel + '</div>' +
                 '<div class="cal-trade-temp">' + (score !== null ? score : '-') + '</div></div>';
         }
@@ -1032,7 +1187,7 @@ var App = (function () {
         container.innerHTML = html;
     }
 
-    // ━━━ 近1年数据表格 ━━━
+    // ━━━ 近1年数据表格（含指数拥挤度因子原始值：换手率/PE/RSI/融资余额）━━━
     var YEAR_TABLE_DATA = null;
     var YEAR_SORT_KEY = "date";
     var YEAR_SORT_ASC = false;
@@ -1052,6 +1207,10 @@ var App = (function () {
                 temp: base.allScores[i],
                 close: base.allCloses[i],
                 ret: base.allRet ? base.allRet[i] : null,
+                turnover: base.allTurnover ? base.allTurnover[i] : null,
+                pe: base.allPe ? base.allPe[i] : null,
+                rsi: base.allRsi ? base.allRsi[i] : null,
+                margin: base.allMargin ? base.allMargin[i] : null,
             });
         }
 
@@ -1071,17 +1230,25 @@ var App = (function () {
             var ec = row.temp !== null ? tempColor(row.temp) : "#86868B";
             var retStr = row.ret !== null ? (row.ret >= 0 ? "+" : "") + row.ret + "%" : "-";
             var retColor = row.ret !== null ? (row.ret >= 0 ? "color:#FF3B30" : "color:#34C759") : "";
+            var turnoverStr = row.turnover !== null ? row.turnover.toFixed(2) : "-";
+            var peStr = row.pe !== null ? row.pe.toFixed(2) : "-";
+            var rsiStr = row.rsi !== null ? row.rsi.toFixed(1) : "-";
+            var marginStr = row.margin !== null ? (row.margin / 1e8).toFixed(2) : "-";
             html += '<tr>' +
                 '<td>' + row.date + '</td>' +
                 '<td><span class="temp-dot" style="background:' + ec + '"></span>' + (row.temp !== null ? row.temp : '-') + '</td>' +
                 '<td>' + (row.close !== null ? row.close.toLocaleString() : '-') + '</td>' +
-                '<td style="' + retColor + '">' + retStr + '</td></tr>';
+                '<td style="' + retColor + '">' + retStr + '</td>' +
+                '<td>' + turnoverStr + '</td>' +
+                '<td>' + peStr + '</td>' +
+                '<td>' + rsiStr + '</td>' +
+                '<td>' + marginStr + '</td></tr>';
         });
         tbody.innerHTML = html;
 
         var hint = document.getElementById("sortHint");
         if (hint) {
-            var colNames = { date: "日期", temp: "温度", close: "收盘", ret: "涨跌幅" };
+            var colNames = { date: "日期", temp: "指数拥挤度", close: "收盘", ret: "涨跌幅", turnover: "换手", pe: "PE", rsi: "RSI", margin: "融资亿" };
             hint.textContent = "按" + colNames[YEAR_SORT_KEY] + (YEAR_SORT_ASC ? "升序" : "降序") + " | 点击切换";
         }
     }
@@ -1195,12 +1362,26 @@ var App = (function () {
             : mergeChartRows(newRows, oldRows);
     }
 
+    function recomputeMarginPeakDrawdown(rows) {
+        var sorted = (rows || []).slice().sort(function (a, b) { return (a.date || "").localeCompare(b.date || ""); });
+        var peak = null;
+        sorted.forEach(function (row) {
+            if (row.balance !== null && row.balance !== undefined && !isNaN(row.balance)) {
+                peak = peak === null ? row.balance : Math.max(peak, row.balance);
+            }
+            row.peak = peak;
+            row.drawdown = (peak !== null && row.balance !== null && row.balance !== undefined && !isNaN(row.balance))
+                ? Math.max(0, peak - row.balance) : null;
+        });
+        return sorted;
+    }
+
     function mergeChartData(base, fresh) {
         base = base || {};
         fresh = fresh || {};
         return {
             market: mergeChartRowsByFreshness(chartRows(base, "market"), chartRows(fresh, "market")),
-            margin: mergeChartRowsByFreshness(chartRows(base, "margin"), chartRows(fresh, "margin")),
+            margin: recomputeMarginPeakDrawdown(mergeChartRowsByFreshness(chartRows(base, "margin"), chartRows(fresh, "margin"))),
             etf: { rows: mergeChartRowsByFreshness(chartRows(base, "etf"), chartRows(fresh, "etf")) },
             updated_at: fresh.updated_at || base.updated_at || "",
             _checkedAt: fresh._checkedAt || base._checkedAt || 0,
@@ -1243,6 +1424,7 @@ var App = (function () {
     function fetchChartDataFromAPI(base) {
         var IS_ANDROID = !!(window.Android && window.Android.isAndroid && window.Android.isAndroid());
         if (!IS_ANDROID) return Promise.reject(new Error("not android"));
+        if (!hasLiveToken()) return Promise.reject(new Error("NO_TOKEN"));
 
         var startDate = new Date();
         startDate.setDate(startDate.getDate() - 365 * 2 - 30);
@@ -1381,7 +1563,12 @@ var App = (function () {
 
         // Android 端先复用持久快照，仅在数据日期落后时刷新末尾重叠区间。
         var dataPromise;
-        if (IS_ANDROID && window.Android.fetchDateSequence) {
+        if (IS_FROZEN_BUILD && !force) {
+            dataPromise = loadChartText("data/chart_data.json").then(function (text) {
+                // 冻结版也要读回本地图表快照，避免刷新过的图表在重开后退回内置
+                return mergeChartData(JSON.parse(text), loadChartSnapshot());
+            });
+        } else if (IS_ANDROID && window.Android.fetchDateSequence) {
             dataPromise = loadChartText("data/chart_data.json").then(function (text) {
                 var staticData = JSON.parse(text);
                 var base = mergeChartData(staticData, loadChartSnapshot());
@@ -1426,7 +1613,6 @@ var App = (function () {
     }
 
     function destroyDataCharts() {
-        destroyHammerManagers();
         Object.keys(DATA_CHARTS).forEach(function (key) {
             if (DATA_CHARTS[key]) DATA_CHARTS[key].destroy();
         });
@@ -1454,7 +1640,7 @@ var App = (function () {
                 legend: { labels: { usePointStyle: true, pointStyle: "circle", padding: 12, color: "#344054", font: { size: 10, weight: "600" } } },
                 tooltip: { backgroundColor: "rgba(15,23,42,.92)", padding: 10, cornerRadius: 8, displayColors: true, titleFont: { size: 11 }, bodyFont: { size: 10 } },
                 zoom: {
-                    pan: { enabled: false },
+                    pan: { enabled: true, mode: "x", threshold: 8 },
                     zoom: { wheel: { enabled: false }, pinch: { enabled: true }, mode: "x" },
                     limits: { x: { minRange: 10 } },
                 },
@@ -1464,49 +1650,6 @@ var App = (function () {
 
     function dataChartOptions(yLabel, y1Label, xRange) {
         return chartLineOptions(yLabel, y1Label, false, xRange);
-    }
-
-    // ━━━ 双指手势：pinch 缩放 + 2指平移（单指留给 tooltip）━━━
-    function setupTwoFingerGestures(chart, canvas) {
-        if (!window.Hammer || !chart || !canvas) return;
-        try {
-            var mc = new Hammer.Manager(canvas, { touchAction: "none" });
-            var pan = new Hammer.Pan({ event: "pan", pointers: 2, threshold: 5 });
-            var pinch = new Hammer.Pinch({ event: "pinch", threshold: 0.05 });
-            mc.add([pan, pinch]);
-            pinch.recognizeWith(pan);
-
-            var lastX = 0;
-            var isPinching = false;
-
-            mc.on("panstart", function () {
-                if (!isPinching) lastX = 0;
-            });
-            mc.on("pan", function (e) {
-                if (isPinching) return;  // pinch 进行中，抑制 pan
-                var deltaX = e.deltaX - lastX;
-                lastX = e.deltaX;
-                if (deltaX !== 0 && chart.pan) {
-                    // 向右拖看更早数据（方向取反与数据轴一致）
-                    chart.pan({ x: -deltaX }, undefined, "x");
-                }
-            });
-
-            mc.on("pinchstart", function () {
-                isPinching = true;
-            });
-            mc.on("pinchend", function () {
-                // 延迟恢复 pan，避免手指抬起瞬间误触发
-                setTimeout(function () { isPinching = false; }, 150);
-            });
-
-            HAMMER_MANAGERS.push(mc);
-        } catch (e) { /* Hammer not available */ }
-    }
-
-    function destroyHammerManagers() {
-        HAMMER_MANAGERS.forEach(function (mc) { try { mc.destroy(); } catch (e) {} });
-        HAMMER_MANAGERS = [];
     }
 
     function renderMarketChart(rows) {
@@ -1529,7 +1672,6 @@ var App = (function () {
             },
             options: dataChartOptions("指数点位", "成交额（亿元）", xRange),
         });
-        setupTwoFingerGestures(DATA_CHARTS.market, document.querySelector("#marketChart"));
     }
 
     function renderMarginChart(rows) {
@@ -1545,7 +1687,6 @@ var App = (function () {
             ] },
             options: dataChartOptions("融资余额（亿元）", "当前回撤（亿元）", xRange),
         });
-        setupTwoFingerGestures(DATA_CHARTS.margin, document.querySelector("#marginChart"));
     }
 
     function renderMarginFlowChart(rows) {
@@ -1559,7 +1700,6 @@ var App = (function () {
             ] },
             options: dataChartOptions("单日净买入（亿元）", "融资余额（亿元）", xRange),
         });
-        setupTwoFingerGestures(DATA_CHARTS.marginFlow, document.querySelector("#marginFlowChart"));
     }
 
     function renderEtfChart(etf) {
@@ -1583,7 +1723,62 @@ var App = (function () {
             data: { labels: labels, datasets: datasets },
             options: dataChartOptions("净流入（亿元）", null, xRange),
         });
-        setupTwoFingerGestures(DATA_CHARTS.etf, document.querySelector("#etfChart"));
+    }
+
+    // 每日处于冰点(<10)/狂热(≥90)状态的指数数量走势（冻结/在线两种模式都基于 DATA）
+    function buildZoneCountSeries() {
+        var byDate = {};
+        var allDates = [];
+        Object.keys(DATA).forEach(function (code) {
+            var d = DATA[code];
+            if (!d || !d.allDates || !d.allScores) return;
+            for (var i = 0; i < d.allDates.length; i++) {
+                var s = d.allScores[i];
+                if (s === null || s === undefined) continue;
+                var dt = d.allDates[i];
+                if (!byDate[dt]) { byDate[dt] = { cold: 0, hot: 0 }; allDates.push(dt); }
+                if (s < 10) byDate[dt].cold++;
+                if (s >= 90) byDate[dt].hot++;
+            }
+        });
+        allDates.sort();
+        return {
+            dates: allDates,
+            cold: allDates.map(function (dt) { return byDate[dt].cold; }),
+            hot: allDates.map(function (dt) { return byDate[dt].hot; }),
+        };
+    }
+
+    function renderZoneCountChart(key, series, label, borderColor, fillColor) {
+        var rows = series || buildZoneCountSeries();
+        var winSize = Math.min(180, rows.dates.length);
+        var xRange = { min: Math.max(0, rows.dates.length - winSize), max: rows.dates.length - 1 };
+        DATA_CHARTS[key] = new Chart(document.getElementById(key + "Chart"), {
+            type: "line",
+            data: {
+                labels: rows.dates.map(function (dt) { return dt.slice(5); }),
+                datasets: [{
+                    label: label,
+                    data: key === "coldCount" ? rows.cold : rows.hot,
+                    borderColor: borderColor,
+                    backgroundColor: fillColor,
+                    borderWidth: 2.2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    tension: 0.25,
+                    fill: true,
+                }],
+            },
+            options: dataChartOptions("数量（个）", null, xRange),
+        });
+    }
+
+    function renderColdCountChart(series) {
+        renderZoneCountChart("coldCount", series, "冰点数量（<10）", "#007AFF", "rgba(0,122,255,0.10)");
+    }
+
+    function renderHotCountChart(series) {
+        renderZoneCountChart("hotCount", series, "狂热数量（≥90）", "#FF3B30", "rgba(255,59,48,0.10)");
     }
 
     function renderDataCharts() {
@@ -1603,6 +1798,9 @@ var App = (function () {
         renderMarginChart(CHART_DATA.margin || []);
         renderMarginFlowChart(CHART_DATA.margin || []);
         renderEtfChart(CHART_DATA.etf || { rows: [] });
+        var zone = buildZoneCountSeries();
+        renderColdCountChart(zone);
+        renderHotCountChart(zone);
         if (status) status.style.display = "none";
         var update = document.getElementById("dataUpdatedAt");
         if (update && CHART_DATA.market && CHART_DATA.market.length) {
@@ -1616,9 +1814,7 @@ var App = (function () {
     function openDataPage() {
         var status = document.getElementById("dataChartStatus");
         if (status && !CHART_DATA) status.style.display = "block";
-        loadChartData().then(function () {
-            renderDataCharts();
-        }).catch(function () {});
+        loadChartData().catch(function () {});
     }
 
     // ━━━ 融资余额每日净买入列表 ━━━
@@ -1649,7 +1845,7 @@ var App = (function () {
             th("date", "日期") + th("balance", "融资余额(亿)") + th("net_buy", "净买入(亿)") +
             "</tr></thead><tbody>";
         display.forEach(function (row) {
-            var cls = row.net_buy >= 0 ? "pos" : "neg";
+            var cls = row.net_buy === null ? "" : (row.net_buy >= 0 ? "pos" : "neg");
             var nb = row.net_buy !== null ? (row.net_buy >= 0 ? "+" : "") + row.net_buy.toFixed(2) : "—";
             var bal = row.balance !== null ? row.balance.toFixed(2) : "—";
             html += '<tr><td>' + row.date + '</td><td>' + bal + '</td><td class="' + cls + '">' + nb + '</td></tr>';
@@ -1670,10 +1866,14 @@ var App = (function () {
     }
 
     function refreshChartData() {
+        if (IS_FROZEN_BUILD && !hasLiveToken()) {
+            showToast("封存版未设置iFinD Token，图表仅显示封存数据");
+            return;
+        }
         showToast("正在刷新图表数据...");
-        loadChartData(true).then(function () {
-            renderDataCharts();
-            showToast("图表数据已更新");
+        var before = CHART_DATA ? latestChartDate(CHART_DATA, "market") : "";
+        loadChartData(true).then(function (data) {
+            showToast(latestChartDate(data, "market") > before ? "图表数据已更新" : "图表数据已是最新");
         }).catch(function () {
             showToast("图表数据更新失败");
         });
@@ -2024,7 +2224,6 @@ var App = (function () {
                     input.value = "";
                     checkTokenStatus();
                     clearDataSnapshot();
-                    DATA = {};
                     fetchLocal(true);
                 } else {
                     showToast("❌ " + (res.error || "更新失败"));
@@ -2154,11 +2353,22 @@ var App = (function () {
         poster.innerHTML =
             '<div style="text-align:center;margin-bottom:14px">' +
             '<h2 style="font-size:26px;font-weight:700;color:#1D1D1F;margin:0 0 4px">' + x.display + '</h2>' +
-            '<div style="font-size:12px;color:#86868B">近30个交易日温度 · ' + ds + '</div>' +
+            '<div style="font-size:12px;color:#86868B">近30个交易日指数拥挤度 · ' + ds + '</div>' +
             '</div>' +
             '<div style="width:100%;height:16px;border-radius:8px;margin-bottom:4px;background:linear-gradient(to right,#007AFF 0%,#007AFF 10%,#5AC8FA 10%,#5AC8FA 20%,#34C759 20%,#34C759 80%,#FF9500 80%,#FF9500 90%,#FF3B30 90%,#FF3B30 100%)"></div>' +
-            '<div style="display:flex;justify-content:space-between;font-size:8px;color:#86868B;margin-bottom:6px">' +
-            '<span>0</span><span>10</span><span>20</span><span>80</span><span>90</span><span>100</span></div>' +
+            '<div style="position:relative;height:12px;margin-top:2px;font-size:9px;color:#86868B">' +
+            '<span style="position:absolute;left:0%;transform:translateX(-50%)">0</span>' +
+            '<span style="position:absolute;left:10%;transform:translateX(-50%)">10</span>' +
+            '<span style="position:absolute;left:20%;transform:translateX(-50%)">20</span>' +
+            '<span style="position:absolute;left:80%;transform:translateX(-50%)">80</span>' +
+            '<span style="position:absolute;left:90%;transform:translateX(-50%)">90</span>' +
+            '<span style="position:absolute;left:100%;transform:translateX(-50%)">100</span></div>' +
+            '<div style="position:relative;height:14px;margin-top:2px;font-size:9px;font-weight:500">' +
+            '<span style="position:absolute;left:5%;transform:translateX(-50%);color:#007AFF">冰点</span>' +
+            '<span style="position:absolute;left:15%;transform:translateX(-50%);color:#5AC8FA">恐惧</span>' +
+            '<span style="position:absolute;left:50%;transform:translateX(-50%);color:#34C759">中性</span>' +
+            '<span style="position:absolute;left:85%;transform:translateX(-50%);color:#FF9500">贪婪</span>' +
+            '<span style="position:absolute;left:95%;transform:translateX(-50%);color:#FF3B30">狂热</span></div>' +
             '<div style="font-size:11px;font-weight:600;color:#86868B;margin:8px 0 6px">近30个交易日</div>' +
             '<div id="calPosterGrid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:4px;flex:1;align-content:space-between"></div>' +
             '<div style="text-align:center;margin-top:10px;font-size:10px;color:#86868B">今日市场情绪播报 | 投资有风险，入市需谨慎</div>' +
@@ -2182,7 +2392,7 @@ var App = (function () {
                     var ec = score !== null ? tempColor(score) : "#E5E5EA";
                     var textClass = (ec === "#5AC8FA" || ec === "#34C759") ? "dt" : "lt";
                     var cell = document.createElement("div");
-                    cell.style.cssText = "border-radius:8px;padding:6px 3px;text-align:center;display:flex;flex-direction:column;justify-content:center;background:" + ec + ";color:" + (textClass === "dt" ? "#1D1D1F" : "#fff") + ";min-height:52px";
+                    cell.style.cssText = "border-radius:8px;padding:6px 3px;text-align:center;display:flex;flex-direction:column;justify-content:center;background:" + ec + ";color:" + (textClass === "dt" ? "#1D1D1F" : "#fff") + ";min-height:44px";
                     cell.innerHTML =
                         '<div style="font-size:9px;font-weight:500;line-height:1">' + monthLabel + '/' + dayLabel + '</div>' +
                         '<div style="font-size:12px;font-weight:700;line-height:1">' + (score !== null ? score : '-') + '</div>';
@@ -2199,7 +2409,7 @@ var App = (function () {
                     document.body.removeChild(poster);
                     if (overlay) overlay.classList.remove("show");
 
-                    var filename = "A股温度计_" + x.display + "_30日_" + new Date().toISOString().slice(0, 10) + ".png";
+                    var filename = "指数拥挤度_" + x.display + "_30日_" + new Date().toISOString().slice(0, 10) + ".png";
 
                     if (IS_ANDROID) {
                         try {
@@ -2283,9 +2493,6 @@ var App = (function () {
                 button.title = "退出横屏查看";
                 button.setAttribute("aria-label", "退出横屏查看");
             }
-            ACTIVE_CHART_LANDSCAPE = key;
-        } else {
-            ACTIVE_CHART_LANDSCAPE = null;
         }
 
         if (window.Android && window.Android.setLandscape) {
@@ -2299,6 +2506,8 @@ var App = (function () {
         tickClock();
         setInterval(tickClock, 30000);
         ensurePosterLayout();
+        // Keep any user-refreshed snapshot on subsequent launches. The bundled
+        // snapshot is used only when this app installation has no local data.
         loadDataSnapshot();
         fetchLocal(false);
     }

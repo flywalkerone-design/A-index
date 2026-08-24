@@ -123,7 +123,7 @@ def _fetch_chunk(code: str, startdate: str, enddate: str) -> pd.DataFrame:
         "startdate": startdate.replace("-", ""),
         "enddate": enddate.replace("-", ""),
         # 融资余额 T+1 公布：用 Fill:Blank，未公布的最新交易日返回空值，
-        # 避免把前一交易日融资余额填充成"有数据"，从而在温度计里算出假温度。
+        # 避免把前一交易日融资余额填充成"有数据"，从而算出虚假读数。
         "functionpara": {"Days": "Tradedays", "Fill": "Blank"},
         "indipara": [{
             "indicator": "ths_margin_trading_balance_index",

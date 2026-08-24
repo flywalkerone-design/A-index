@@ -1,5 +1,5 @@
 /**
- * A股市场温度计 - 主应用逻辑
+ * 指数拥挤度 - 主应用逻辑
  *
  * Android: 直接调 iFinD API，完全本地运行
  * 浏览器: 通过 proxy.py 代理（开发模式）
@@ -537,7 +537,7 @@ var App = (function () {
         if (i < 0) {
             return {
                 code: idxData.code, display: idxData.display, group: idxData.group,
-                score: null, state: "暂无数据", stateColor: "#86868B", emotion: "暂无温度", emotionColor: "#86868B",
+                score: null, state: "暂无数据", stateColor: "#86868B", emotion: "暂无指数拥挤度", emotionColor: "#86868B",
                 close: null, ret: null, rsi: null, pe: null, amount: null, ma5: null, ma20: null, ma60: null,
                 ranks: {}, allDates: idxData.allDates, allScores: idxData.allScores,
                 allCloses: idxData.allCloses, allRet: idxData.allRet, dates: idxData.dates,
@@ -547,7 +547,7 @@ var App = (function () {
 
         var score = idxData.allScores[i];
         var scoreRounded = score !== null && score !== undefined ? score : null;
-        var emo = scoreRounded === null ? { label: "暂无温度", color: "#86868B" } : AppConfig.getEmotion(scoreRounded);
+        var emo = scoreRounded === null ? { label: "暂无指数拥挤度", color: "#86868B" } : AppConfig.getEmotion(scoreRounded);
 
         return {
             code: idxData.code,
@@ -638,7 +638,7 @@ var App = (function () {
         notices.forEach(function (el) {
             if (!el) return;
             el.style.display = show ? "block" : "none";
-            el.innerHTML = show ? "<strong>融资余额未更新</strong>，今日温度暂不出值。" : "";
+            el.innerHTML = show ? "<strong>融资余额未更新</strong>，今日指数拥挤度暂不出值。" : "";
         });
     }
 
@@ -878,7 +878,7 @@ var App = (function () {
         // 海报4：主题行业（小方块展示全部主题行业）
         document.getElementById("sectorGrid").innerHTML = renderBlockGridHtml(secV);
 
-        // 海报6：连续5日冰点板块（温度<10）
+        // 海报6：连续5日冰点板块（指数拥挤度<10）
         var coldCount = extreme.cold.length;
         document.getElementById("coldPosterTitle").textContent =
             coldCount > 0 ? "连续5日冰点 · " + coldCount + "个板块" : "连续5日冰点";
@@ -886,7 +886,7 @@ var App = (function () {
             ? renderExtremeGridHtml(extreme.cold, "cold")
             : '<div style="text-align:center;color:#86868B;padding:20px;font-size:12px">当前无连续5日冰点板块</div>';
 
-        // 海报7：连续5日狂热板块（温度>90）
+        // 海报7：连续5日狂热板块（指数拥挤度>90）
         var hotCount = extreme.hot.length;
         document.getElementById("hotPosterTitle").textContent =
             hotCount > 0 ? "连续5日狂热 · " + hotCount + "个板块" : "连续5日狂热";
@@ -962,7 +962,7 @@ var App = (function () {
 
         if (extreme.cold.length > 0) {
             var coldCount = extreme.cold.length;
-            html += '<div class="section-title" style="color:#007AFF">❄️ 连续5日冰点（温度<10）· ' + coldCount + '个板块</div>';
+            html += '<div class="section-title" style="color:#007AFF">❄️ 连续5日冰点（指数拥挤度<10）· ' + coldCount + '个板块</div>';
             extreme.cold.forEach(function (e) {
                 html += '<div class="extreme-row" onclick="App.showDetail(\'' + e.config.code + '\')">';
                 html += '<div class="extreme-name">' + e.config.display + '</div>';
@@ -976,7 +976,7 @@ var App = (function () {
 
         if (extreme.hot.length > 0) {
             var hotCount = extreme.hot.length;
-            html += '<div class="section-title" style="color:#FF3B30;margin-top:12px">🔥 连续5日狂热（温度>90）· ' + hotCount + '个板块</div>';
+            html += '<div class="section-title" style="color:#FF3B30;margin-top:12px">🔥 连续5日狂热（指数拥挤度>90）· ' + hotCount + '个板块</div>';
             extreme.hot.forEach(function (e) {
                 html += '<div class="extreme-row" onclick="App.showDetail(\'' + e.config.code + '\')">';
                 html += '<div class="extreme-name">' + e.config.display + '</div>';
@@ -1011,33 +1011,33 @@ var App = (function () {
         var html = '<button class="detail-back" onclick="App.switchTab(\'' + DETAIL_FROM_TAB + '\')">← 返回</button>';
         html += '<div class="page-title">' + x.display + ' <span style="font-size:13px;font-weight:400;color:#86868B">' + x.ifind + '</span></div>';
 
-        // 温度条
+        // 指数拥挤度条
         html += '<div class="d-temp-bar"><div class="d-bar"></div>';
         html += '<div class="d-nums"><span style="left:0%">0</span><span style="left:10%">10</span><span style="left:20%">20</span><span style="left:80%">80</span><span style="left:90%">90</span><span style="left:100%">100</span></div>';
         html += '<div class="d-labels"><span class="dl1">冰点</span><span class="dl2">恐惧</span><span class="dl3">中性</span><span class="dl4">贪婪</span><span class="dl5">狂热</span></div></div>';
 
-        html += '<div class="d-cards"><div class="d-card"><div class="v" style="color:' + ec + '">' + (d.score === null ? "-" : d.score) + '℃</div><div class="l">市场温度</div></div>';
+        html += '<div class="d-cards"><div class="d-card"><div class="v" style="color:' + ec + '">' + (d.score === null ? "-" : d.score) + '</div><div class="l">指数拥挤度</div></div>';
         html += '<div class="d-card"><div class="v" style="color:' + ec + '">' + el + '</div><div class="l">市场状态</div></div>';
         html += '<div class="d-card"><div class="v" style="font-size:18px">' + d.close + '</div><div class="l">' + x.display + '收盘</div>';
         if (d.ret !== null) html += '<div class="c ' + (d.ret >= 0 ? "up" : "dn") + '">' + (d.ret >= 0 ? "+" : "") + d.ret + '%</div>';
         html += '</div></div>';
 
         // 走势图（去掉滑轨，手势与数据Tab统一）
-        html += '<div class="d-section" id="detailChartSection"><h3>市场温度 & ' + x.display + '走势<button class="chart-view-btn" onclick="App.toggleChartLandscape(\'detail\')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom(\'detail\')" title="重置缩放" aria-label="重置缩放">⟲</button></h3><div class="d-chart"><canvas id="detailChart"></canvas></div><p style="font-size:11px;color:#86868B;margin-top:4px">单指左右拖动平移/查看，双指捏合缩放，上下滑动页面。</p></div>';
+        html += '<div class="d-section" id="detailChartSection"><h3>指数拥挤度 & ' + x.display + '走势<button class="chart-view-btn" onclick="App.toggleChartLandscape(\'detail\')" title="横屏查看此图" aria-label="横屏查看此图">⤢</button><button class="chart-reset-btn" onclick="App.resetChartZoom(\'detail\')" title="重置缩放" aria-label="重置缩放">⟲</button></h3><div class="d-chart"><canvas id="detailChart"></canvas></div><p style="font-size:11px;color:#86868B;margin-top:4px">单指左右拖动平移/查看，双指捏合缩放，上下滑动页面。</p></div>';
 
-        // 近30个交易日温度日历（只显示交易日，无周末）
-        html += '<div class="d-section"><h3>近30个交易日温度</h3>';
+        // 近30个交易日指数拥挤度日历（只显示交易日，无周末）
+        html += '<div class="d-section"><h3>近30个交易日指数拥挤度</h3>';
         html += '<div id="calPosterWrap">';
         html += '<div class="cal-trade-grid" id="calGrid"></div>';
         html += '</div>';
-        html += '<button class="dl-btn" style="margin-top:8px" onclick="App.downloadCalPoster()">📥 分享30日温度海报</button></div>';
+        html += '<button class="dl-btn" style="margin-top:8px" onclick="App.downloadCalPoster()">📥 分享30日指数拥挤度海报</button></div>';
 
         // 近1年数据表格
         html += '<div class="d-section"><h3>近1年数据 <span style="font-weight:400;font-size:11px;color:#86868B;float:right" id="sortHint">点击表头排序</span></h3>';
         html += '<div style="max-height:300px;overflow-y:auto;-webkit-overflow-scrolling:touch">';
         html += '<table class="d-table" id="yearTable"><thead><tr>' +
             '<th class="clickable" onclick="App.sortYearTable(\'date\')">日期 ▾</th>' +
-            '<th class="clickable" onclick="App.sortYearTable(\'temp\')">温度 ▾</th>' +
+            '<th class="clickable" onclick="App.sortYearTable(\'temp\')">指数拥挤度 ▾</th>' +
             '<th class="clickable" onclick="App.sortYearTable(\'close\')">收盘 ▾</th>' +
             '<th class="clickable" onclick="App.sortYearTable(\'ret\')">涨跌 ▾</th>' +
             '<th class="clickable" onclick="App.sortYearTable(\'turnover\')">换手 ▾</th>' +
@@ -1135,10 +1135,10 @@ var App = (function () {
         DETAIL_CHART = new Chart(ctx, {
             type: "line",
             data: { labels: dates.map(function (dt) { return dt.slice(5); }), datasets: [
-                { label: "市场温度", data: scores, borderColor: "#FF9500", backgroundColor: "rgba(255,149,0,.12)", fill: true, tension: .28, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.4, yAxisID: "y" },
+                { label: "指数拥挤度", data: scores, borderColor: "#FF9500", backgroundColor: "rgba(255,149,0,.12)", fill: true, tension: .28, pointRadius: 0, pointHoverRadius: 4, borderWidth: 2.4, yAxisID: "y" },
                 { label: x.display, data: closes, borderColor: "#007AFF", backgroundColor: "rgba(0,122,255,.05)", borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: .28, fill: true, yAxisID: "y1" },
             ] },
-            options: chartLineOptions("市场温度（℃）", x.display + "点位", true),
+            options: chartLineOptions("指数拥挤度", x.display + "点位", true),
         });
     }
 
@@ -1158,7 +1158,7 @@ var App = (function () {
         if (key === "hotCount") renderHotCountChart(buildZoneCountSeries());
     }
 
-    // ━━━ 30个交易日温度日历（仅交易日，5列×6行）━━━
+    // ━━━ 30个交易日指数拥挤度日历（仅交易日，5列×6行）━━━
     function renderCalendar(base) {
         var container = document.getElementById("calGrid");
         if (!container || !base.allDates) return;
@@ -1179,7 +1179,7 @@ var App = (function () {
             if (score !== null) ec = tempColor(score);
             var textClass = (ec === "#5AC8FA" || ec === "#34C759") ? "dt" : "lt";
 
-            html += '<div class="cal-trade-cell ' + textClass + '" style="background:' + ec + '" title="' + dt + ': ' + (score !== null ? score + '℃' : '-') + '">' +
+            html += '<div class="cal-trade-cell ' + textClass + '" style="background:' + ec + '" title="' + dt + ': ' + (score !== null ? score + '' : '-') + '">' +
                 '<div class="cal-trade-label">' + monthLabel + '/' + dayLabel + '</div>' +
                 '<div class="cal-trade-temp">' + (score !== null ? score : '-') + '</div></div>';
         }
@@ -1187,7 +1187,7 @@ var App = (function () {
         container.innerHTML = html;
     }
 
-    // ━━━ 近1年数据表格（含温度因子原始值：换手率/PE/RSI/融资余额）━━━
+    // ━━━ 近1年数据表格（含指数拥挤度因子原始值：换手率/PE/RSI/融资余额）━━━
     var YEAR_TABLE_DATA = null;
     var YEAR_SORT_KEY = "date";
     var YEAR_SORT_ASC = false;
@@ -1248,7 +1248,7 @@ var App = (function () {
 
         var hint = document.getElementById("sortHint");
         if (hint) {
-            var colNames = { date: "日期", temp: "温度", close: "收盘", ret: "涨跌幅", turnover: "换手", pe: "PE", rsi: "RSI", margin: "融资亿" };
+            var colNames = { date: "日期", temp: "指数拥挤度", close: "收盘", ret: "涨跌幅", turnover: "换手", pe: "PE", rsi: "RSI", margin: "融资亿" };
             hint.textContent = "按" + colNames[YEAR_SORT_KEY] + (YEAR_SORT_ASC ? "升序" : "降序") + " | 点击切换";
         }
     }
@@ -2353,7 +2353,7 @@ var App = (function () {
         poster.innerHTML =
             '<div style="text-align:center;margin-bottom:14px">' +
             '<h2 style="font-size:26px;font-weight:700;color:#1D1D1F;margin:0 0 4px">' + x.display + '</h2>' +
-            '<div style="font-size:12px;color:#86868B">近30个交易日温度 · ' + ds + '</div>' +
+            '<div style="font-size:12px;color:#86868B">近30个交易日指数拥挤度 · ' + ds + '</div>' +
             '</div>' +
             '<div style="width:100%;height:16px;border-radius:8px;margin-bottom:4px;background:linear-gradient(to right,#007AFF 0%,#007AFF 10%,#5AC8FA 10%,#5AC8FA 20%,#34C759 20%,#34C759 80%,#FF9500 80%,#FF9500 90%,#FF3B30 90%,#FF3B30 100%)"></div>' +
             '<div style="position:relative;height:12px;margin-top:2px;font-size:9px;color:#86868B">' +
@@ -2409,7 +2409,7 @@ var App = (function () {
                     document.body.removeChild(poster);
                     if (overlay) overlay.classList.remove("show");
 
-                    var filename = "指数温度计_" + x.display + "_30日_" + new Date().toISOString().slice(0, 10) + ".png";
+                    var filename = "指数拥挤度_" + x.display + "_30日_" + new Date().toISOString().slice(0, 10) + ".png";
 
                     if (IS_ANDROID) {
                         try {

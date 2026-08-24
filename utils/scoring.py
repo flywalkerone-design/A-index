@@ -1,9 +1,9 @@
 """
-A股市场温度计 - 温度评分系统
+A股指数拥挤度计 - 指数拥挤度评分系统
 100%还原 Excel 算法：
-  1. 6个百分位排名等权平均 → market_score（O列「市场温度」）
-  2. 对 market_score 再做 PERCENTRANK.INC（窗口=120）→ market_score_low_freq（P列「市场温度-低频」）
-  3. 根据温度值判定市场状态（冰点/恐惧/偏冷/中性/偏热/过热/狂热）
+  1. 6个百分位排名等权平均 → market_score（O列「指数拥挤度」）
+  2. 对 market_score 再做 PERCENTRANK.INC（窗口=120）→ market_score_low_freq（P列「指数拥挤度-低频」）
+  3. 根据指数拥挤度值判定市场状态（冰点/恐惧/偏冷/中性/偏热/过热/狂热）
 """
 
 import sys
@@ -19,7 +19,7 @@ from utils.logger import log
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 1. 计算市场温度（等权平均，对应 Excel O 列）
+# 1. 计算指数拥挤度（等权平均，对应 Excel O 列）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def calc_market_score(df: pd.DataFrame, use_margin: bool = True) -> pd.DataFrame:
     """
@@ -42,7 +42,7 @@ def calc_market_score(df: pd.DataFrame, use_margin: bool = True) -> pd.DataFrame
         rank_cols.append("rank_margin")
     missing = [column for column in rank_cols if column not in df.columns]
     if missing:
-        log.error(f"缺少必要排名列，无法计算市场温度: {missing}")
+        log.error(f"缺少必要排名列，无法计算指数拥挤度: {missing}")
         df["market_score"] = np.nan
         return df
 
@@ -53,7 +53,7 @@ def calc_market_score(df: pd.DataFrame, use_margin: bool = True) -> pd.DataFrame
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 2. 低频温度（二次 PERCENTRANK，对应 Excel P 列）
+# 2. 低频指数拥挤度（二次 PERCENTRANK，对应 Excel P 列）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def calc_low_freq_temperature(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -73,7 +73,7 @@ def calc_low_freq_temperature(df: pd.DataFrame) -> pd.DataFrame:
 
     df["market_score_low_freq"] = percentrank_inc(df["market_score"], window)
 
-    log.info(f"低频温度计算完成（窗口={window}）")
+    log.info(f"低频指数拥挤度计算完成（窗口={window}）")
 
     return df
 
@@ -83,8 +83,8 @@ def calc_low_freq_temperature(df: pd.DataFrame) -> pd.DataFrame:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def get_market_state(score: float) -> tuple:
     """
-    根据温度分值判定市场状态
-    温度范围 0~1 映射到 0~100 后与 MARKET_STATES 匹配
+    根据指数拥挤度分值判定市场状态
+    指数拥挤度范围 0~1 映射到 0~100 后与 MARKET_STATES 匹配
 
     返回: (状态名称, 颜色代码)
     """
@@ -106,7 +106,7 @@ def get_market_state(score: float) -> tuple:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def calc_market_temperature(df: pd.DataFrame, use_margin: bool = True) -> pd.DataFrame:
     """
-    完整温度计算流程：
+    完整指数拥挤度计算流程：
         等权平均 → market_score
         二次排名 → market_score_low_freq
         状态判定 → market_state, state_color
@@ -118,7 +118,7 @@ def calc_market_temperature(df: pd.DataFrame, use_margin: bool = True) -> pd.Dat
     返回:
         新增 market_score, market_score_low_freq, market_state, state_color 列
     """
-    log.info("开始计算市场温度...")
+    log.info("开始计算指数拥挤度...")
 
     # Step 1: 等权平均
     df = calc_market_score(df, use_margin=use_margin)
@@ -126,7 +126,7 @@ def calc_market_temperature(df: pd.DataFrame, use_margin: bool = True) -> pd.Dat
     # Step 2: 二次 PERCENTRANK
     df = calc_low_freq_temperature(df)
 
-    # Step 3: 市场状态判定（基于低频温度）
+    # Step 3: 市场状态判定（基于低频指数拥挤度）
     state_info = df["market_score_low_freq"].apply(
         lambda s: pd.Series(get_market_state(s), index=["market_state", "state_color"])
     )
@@ -135,23 +135,23 @@ def calc_market_temperature(df: pd.DataFrame, use_margin: bool = True) -> pd.Dat
     # 统计输出
     latest_score = df["market_score_low_freq"].iloc[-1]
     latest_state = df["market_state"].iloc[-1]
-    log.info(f"市场温度计算完成")
-    log.info(f"  温度（原始）: {df['market_score'].iloc[-1]:.4f}")
-    log.info(f"  温度（低频）: {latest_score:.4f}  ({latest_score*100:.1f}℃)")
+    log.info(f"指数拥挤度计算完成")
+    log.info(f"  指数拥挤度（原始）: {df['market_score'].iloc[-1]:.4f}")
+    log.info(f"  指数拥挤度（低频）: {latest_score:.4f}  ({latest_score*100:.1f})")
     log.info(f"  市场状态: {latest_state}")
 
     return df
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 5. 获取温度详情（用于日报）
+# 5. 获取指数拥挤度详情（用于日报）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def get_score_details(df: pd.DataFrame, use_margin: bool = True) -> dict:
     """
-    获取最新一天的温度评分详情
+    获取最新一天的指数拥挤度评分详情
 
     返回:
-        dict，包含温度值、状态、各指标分值
+        dict，包含指数拥挤度值、状态、各指标分值
     """
     latest = df.iloc[-1]
     prev = df.iloc[-2] if len(df) > 1 else latest
@@ -162,7 +162,7 @@ def get_score_details(df: pd.DataFrame, use_margin: bool = True) -> dict:
     details = {
         "score_raw": score_raw,
         "score": score_low,
-        "score_pct": score_low * 100,  # 0~100 温度值
+        "score_pct": score_low * 100,  # 0~100 指数拥挤度值
         "state": latest["market_state"],
         "color": latest["state_color"],
         "prev_score": prev["market_score_low_freq"],
@@ -231,10 +231,10 @@ if __name__ == "__main__":
 
     details = get_score_details(df)
     print(f"\n日期: {details['date']}")
-    print(f"温度（原始）: {details['score_raw']:.4f}")
-    print(f"温度（低频）: {details['score']:.4f}  →  {details['score_pct']:.1f}℃")
+    print(f"指数拥挤度（原始）: {details['score_raw']:.4f}")
+    print(f"指数拥挤度（低频）: {details['score']:.4f}  →  {details['score_pct']:.1f}")
     print(f"市场状态: {details['state']}")
-    print(f"较昨日: {details['score_change']:+.1f}℃")
+    print(f"较昨日: {details['score_change']:+.1f}")
     print(f"\n各指标排名详情:")
     for k, v in details["components"].items():
         print(f"  {v['name']}: {v['value']} (权重{v['weight']:.1%})")

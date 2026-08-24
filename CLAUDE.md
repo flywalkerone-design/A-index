@@ -1,4 +1,4 @@
-# CLAUDE.md — A股市场温度计 / 指数拥挤度
+# CLAUDE.md — 指数拥挤度
 
 Android APP 项目。原生 Android（Gradle + WebView），行情数据来自 iFinD（quantapi.51ifind.com）。
 
@@ -31,12 +31,12 @@ Android APP 项目。原生 Android（Gradle + WebView），行情数据来自 i
 - iFinD token：`ifind_token.txt`，有效期约 7 天，过期需更新。
 - 更新方式：APP 内 ⚙️设置 → 🔑Token管理，或直接编辑 `ifind_token.txt`。
 
-## ⭐ 温度计算核心逻辑（APP 与 Windows APP 通用，勿轻易改动）
+## ⭐ 指数拥挤度计算核心逻辑（APP 与 Windows APP 通用，勿轻易改动）
 
-1. **温度只在「所有因子数据都齐全」的日期计算**（收盘价、换手率、PE、RSI、融资余额 5 项，缺一项则该日无温度）。
-2. **融资余额是 T+1 公布的**：最新一个交易日的融资余额还没出，所以该日通常不算温度。例如 2026-08-22（周六）构建快照时，08-20 是数据完整最后一天，08-21 的融资余额要等下周一。
+1. **指数拥挤度只在「所有因子数据都齐全」的日期计算**（收盘价、换手率、PE、RSI、融资余额 5 项，缺一项则该日无指数拥挤度）。
+2. **融资余额是 T+1 公布的**：最新一个交易日的融资余额还没出，所以该日通常不算指数拥挤度。例如 2026-08-22（周六）构建快照时，08-20 是数据完整最后一天，08-21 的融资余额要等下周一。
 3. **全局统一截止日**：所有指数统一显示到「所有指数都有完整数据」的最后一天（取各指数最后一个完整数据日的最小值），不按指数各自的最新日展示。实现见 `build_frozen_snapshot.py` 的 `global data cutoff` 逻辑。
-4. 判断「融资余额是否已公布」用 `Fill: Blank`（不要用 `Fill: Previous`——会把前一交易日数据填充成"有数据"，从而算出假温度）。融资缓存 schema 升级过（v2→v3）。
+4. 判断「融资余额是否已公布」用 `Fill: Blank`（不要用 `Fill: Previous`——会把前一交易日数据填充成"有数据"，从而算出假指数拥挤度）。融资缓存 schema 升级过（v2→v3）。
 
 ## 数据源注意点
 
@@ -48,4 +48,4 @@ Android APP 项目。原生 Android（Gradle + WebView），行情数据来自 i
 
 - 签名安全隐患已解决：不再硬编码 release 密钥/密码，改为 CI 每次构建生成独立 keystore（见「构建 APK」）。
 
-- APK 安装显示名已改为**动态生成**：`android/app/build.gradle.kts` 用 `resValue("string","app_name","指数温度计 "+displayVersion)` 生成，跟随版本日期（如「指数温度计 0822」），不再写死。
+- APK 安装显示名已改为**动态生成**：`android/app/build.gradle.kts` 用 `resValue("string","app_name","指数拥挤度 "+displayVersion)` 生成，跟随版本日期（如「指数拥挤度 0822」），不再写死。

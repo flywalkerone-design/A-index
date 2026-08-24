@@ -1,5 +1,5 @@
 """
-A股温度计 - Flask本地服务
+A股指数拥挤度计 - Flask本地服务
 启动后访问 http://localhost:5000
 """
 
@@ -214,7 +214,7 @@ def api_token_update():
 
 if __name__ == "__main__":
     print("\n" + "=" * 50)
-    print("  A股温度计 APP")
+    print("  A股指数拥挤度计 APP")
     print("  访问: http://localhost:5000")
     print("=" * 50 + "\n")
     app.run(host="0.0.0.0", port=5000, debug=False)

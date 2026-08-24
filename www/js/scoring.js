@@ -1,16 +1,16 @@
 /**
- * A股市场温度计 - 温度评分系统
+ * 指数拥挤度 - 指数拥挤度评分系统
  * 100%还原 Python scoring.py 逻辑：
- *   1. 5个百分位排名等权平均 → market_score（O列「市场温度」）
+ *   1. 5个百分位排名等权平均 → market_score（O列「指数拥挤度」）
  *   2. 对 market_score 再做 PERCENTRANK.INC（窗口=120）→ market_score_low_freq（P列）
- *   3. 根据温度值判定市场状态（冰点/恐惧/偏冷/中性/偏热/过热/狂热）
+ *   3. 根据指数拥挤度值判定市场状态（冰点/恐惧/偏冷/中性/偏热/过热/狂热）
  */
 
 var Scoring = (function () {
     "use strict";
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 1. 计算市场温度（等权平均）
+    // 1. 计算指数拥挤度（等权平均）
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     /**
      * 百分位排名等权平均 → market_score（0~1）
@@ -56,7 +56,7 @@ var Scoring = (function () {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 2. 低频温度（二次 PERCENTRANK）
+    // 2. 低频指数拥挤度（二次 PERCENTRANK）
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     /**
      * 对 market_score 做 PERCENTRANK.INC 二次排名（窗口=120）
@@ -73,7 +73,7 @@ var Scoring = (function () {
     // 3. 统一评分入口
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     /**
-     * 完整温度计算流程
+     * 完整指数拥挤度算流程
      * 与 Python calc_market_temperature 完全一致
      *
      * @param {Object} data - 包含 rank_* 的数据对象
@@ -103,15 +103,15 @@ var Scoring = (function () {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 4. 获取温度详情（用于详情页）
+    // 4. 获取指数拥挤度详情（用于详情页）
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     /**
-     * 获取最新一天的温度评分详情
+     * 获取最新一天的指数拥挤度评分详情
      * 与 Python get_score_details 一致
      *
-     * @param {Object} data - 计算完温度的数据对象
+     * @param {Object} data - 计算完指数拥挤度的数据对象
      * @param {boolean} useMargin
-     * @returns {Object} 温度详情
+     * @returns {Object} 指数拥挤度详情
      */
     function getScoreDetails(data, useMargin) {
         var n = data.close.length;

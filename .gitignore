@@ -28,6 +28,13 @@ data/index_cache/
 data/ifind_margin_cache/
 data/api_data_cache.json
 
+# Dev artifacts / one-off scripts (not part of the deliverable)
+.codex_patch_work/
+debug_indicators*.py
+calc_temp_test.py
+preview.html
+output/
+
 # Logs
 output/logs/
 

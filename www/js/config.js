@@ -1,5 +1,5 @@
 /**
- * A股市场温度计 - 全局配置
+ * 指数拥挤度 - 全局配置
  * 与 Python config.py 完全一致
  */
 
@@ -56,7 +56,7 @@ var AppConfig = (function () {
         { code: "980081", ifind: "980081.SZ", name: "价值100", display: "价值100", group: "smartbeta", margin: true },
     ];
 
-    // ━━━ 指标参数（与 Excel 温度计完全一致）━━━
+    // ━━━ 指标参数（与 Excel 指数拥挤度完全一致）━━━
     var RSI_PERIOD = 6;
     var PERCENTRANK_WINDOW = 180;
     var LOW_FREQ_WINDOW = 120;

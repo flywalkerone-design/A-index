@@ -1,4 +1,4 @@
-# A股温度计 APP
+# 指数拥挤度 APP
 
 ## 打包成Android APK
 
@@ -100,11 +100,11 @@ python server.py
 ├── data_service.py      # 数据获取+计算
 ├── config.py            # 指数配置
 ├── ifind_token.txt      # iFinD token
-├── A股温度计_自定义版.html  # 前端页面
+├── 指数拥挤度_自定义版.html  # 前端页面
 └── utils/
     ├── ifind_data.py    # iFinD API
     ├── indicators.py    # 技术指标
-    ├── scoring.py       # 温度计算
+    ├── scoring.py       # 指数拥挤度计算
     └── logger.py        # 日志
 ```
 

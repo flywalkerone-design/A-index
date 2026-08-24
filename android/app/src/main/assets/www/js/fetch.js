@@ -1,5 +1,5 @@
 /**
- * A股市场温度计 - 数据获取模块
+ * 指数拥挤度 - 数据获取模块
  *
  * 两种模式：
  *   Android: 直接调 iFinD API（Java 层处理 token 和 HTTP）
@@ -544,7 +544,7 @@ var Fetch = (function () {
     // 5. 完整流水线：获取 + 计算
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     /**
-     * 获取单个指数数据并计算全部指标和温度
+     * 获取单个指数数据并计算全部指标和指数拥挤度
      * @param {Object} idxConfig
      * @param {string} startDate
      * @param {string} endDate

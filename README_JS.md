@@ -1,4 +1,4 @@
-# A股温度计 - JavaScript 前端版
+# 指数拥挤度 - JavaScript 前端版
 
 ## 架构说明
 
@@ -25,7 +25,7 @@
 ### 文件结构
 
 ```
-温度计APP/
+指数拥挤度计APP/
 ├── proxy.py                    # CORS代理 + 静态文件服务
 ├── requirements-js.txt         # Python依赖
 ├── ifind_token.txt             # iFinD token
@@ -34,7 +34,7 @@
 │   └── js/
 │       ├── config.js           # 配置（28个指数、参数、状态映射）
 │       ├── indicators.js       # 指标计算引擎（RSI、PERCENTRANK.INC）
-│       ├── scoring.js          # 温度评分系统
+│       ├── scoring.js          # 指数拥挤度评分系统
 │       ├── fetch.js            # 数据获取模块
 │       └── app.js              # 主应用逻辑
 ├── utils/                      # 原Python计算模块（保留，模式1使用）
@@ -85,15 +85,15 @@ python proxy.py
 | `calcAllPercentileRanks()` | 5个因子的百分位排名 | `calc_all_percentile_ranks()` |
 | `calcAll()` | 一键计算全部指标 | `calc_all_indicators()` |
 
-### scoring.js - 温度评分
+### scoring.js - 指数拥挤度评分
 完全复刻 Python `utils/scoring.py` 的逻辑：
 
 | 函数 | 说明 | 对应Python函数 |
 |------|------|---------------|
 | `calcMarketScore()` | 5因子等权平均 | `calc_market_score()` |
 | `calcLowFreqTemperature()` | 二次PERCENTRANK（窗口=120） | `calc_low_freq_temperature()` |
-| `calcTemperature()` | 完整温度计算流程 | `calc_market_temperature()` |
-| `getScoreDetails()` | 获取温度详情 | `get_score_details()` |
+| `calcTemperature()` | 完整指数拥挤度计算流程 | `calc_market_temperature()` |
+| `getScoreDetails()` | 获取指数拥挤度详情 | `get_score_details()` |
 
 ## 打包为 Android APK
 

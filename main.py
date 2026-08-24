@@ -1,5 +1,5 @@
 """
-A股温度计 - Android APP入口
+指数拥挤度 - Android APP入口
 Kivy WebView + Flask后台服务
 """
 
@@ -106,7 +106,7 @@ class TempApp(App):
         """桌面测试用：显示提示信息"""
         layout = BoxLayout(orientation='vertical', padding=20)
         layout.add_widget(Label(
-            text='A股温度计\n\n服务已启动\n请在浏览器访问:\nhttp://localhost:5000',
+            text='指数拥挤度\n\n服务已启动\n请在浏览器访问:\nhttp://localhost:5000',
             font_size=18,
             halign='center',
             valign='middle'

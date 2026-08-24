@@ -1,4 +1,4 @@
-# A股温度计 Android APK
+# 指数拥挤度 Android APK
 
 **完全本地运行，不需要开电脑。**
 
@@ -64,7 +64,7 @@ token 获取方式：从同花顺 iFinD 客户端获取 refresh_token。
 
 ### 3. 开始使用
 
-设置好 token 后，app 会自动加载 28 个指数的数据并计算温度。
+设置好 token 后，app 会自动加载 28 个指数的数据并计算指数拥挤度。
 
 **token 有效期约 7 天**，过期后需要重新获取。
 
@@ -78,7 +78,7 @@ token 获取方式：从同花顺 iFinD 客户端获取 refresh_token。
 │  │  index.html + JS                       │ │
 │  │  ├── config.js     (指数配置)           │ │
 │  │  ├── indicators.js (RSI/PERCENTRANK)   │ │
-│  │  ├── scoring.js    (温度计算)           │ │
+│  │  ├── scoring.js    (指数拥挤度算)           │ │
 │  │  ├── fetch.js      (调用 Java 接口)     │ │
 │  │  └── app.js        (UI渲染)            │ │
 │  └───────────────┬────────────────────────┘ │
@@ -105,7 +105,7 @@ token 获取方式：从同花顺 iFinD 客户端获取 refresh_token。
 1. JS `fetch.js` 调用 `Android.fetchIndexHistory(code, start, end)`
 2. Java 层自动获取/缓存 access_token，发起 HTTPS 请求
 3. 返回 JSON 数据给 JS
-4. JS 本地计算 RSI、PERCENTRANK、温度等指标
+4. JS 本地计算 RSI、PERCENTRANK、指数拥挤度等指标
 5. 结果缓存在 localStorage，避免重复请求
 
 ## 常见问题
