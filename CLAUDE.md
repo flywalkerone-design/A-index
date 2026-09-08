@@ -49,3 +49,14 @@ Android APP 项目。原生 Android（Gradle + WebView），行情数据来自 i
 - 签名安全隐患已解决：不再硬编码 release 密钥/密码，改为 CI 每次构建生成独立 keystore（见「构建 APK」）。
 
 - APK 安装显示名已改为**动态生成**：`android/app/build.gradle.kts` 用 `resValue("string","app_name","指数拥挤度 "+displayVersion)` 生成，跟随版本日期（如「指数拥挤度 0822」），不再写死。
+
+- **Android 端缓存/调用量机制（2026-09 加）**：
+  - JS 大体积历史序列缓存与最新数据快照改存**原生文件**（MainActivity 桥：`cacheRead/cacheWrite/cacheKeys/cacheRemove`，存 `getFilesDir()/ifind_cache/`）。原因：旧版存 localStorage，数据（~150 键 × 2 年序列）超配额 → 保存静默失败/缓存被清 → 每次刷新整段重下 2 年、且重启后退回内置旧快照（曾出现"回到 08-20"）。
+  - **同交易日刷新限流**：`fetchLocal` 内 gate（`a_stock_refresh_gate_v1`）——当天已成功刷到目标数据日期（融资 T+1 口径）后，再点"刷新"直接跳过不发请求；未刷到（如融资当天未公布）有 10 分钟冷却。设置面板"⚠️ 立即重新拉取"可强制。
+  - 设置面板 Token 区展示：签发时间 / refresh_token 到期 / access_token 到期（解析 refresh_token payload + `get_access_token` 的 `expired_time`），及**本机调用量**（MainActivity `recordCall`，SharedPreferences 按自然月清零）。iFinD access_token 接口**无剩余额度字段**，无法在 APP 内精确显示剩余额度。
+
+- **刷新交互（2026-09 加）**：
+  - MainActivity 的 4 个网络方法（`fetchIndexHistory/fetchMargin/fetchMarginMarketStats/fetchDateSequence`）是**异步**的：JS 传回调 id，Java 在线程池执行、经 `postResult`（`evaluateJavascript` → `window.__ifindOnResult(id, json)`）回传，配套 JS 全局 `window.__ifindCall(method, args)`。勿改回同步——同步桥会阻塞 JS 主线程，刷新时页面卡死。
+  - `checkToken/getTokenInfo/getUsage/cache*` 仍是同步桥。
+  - 刷新进度条：有旧数据时顶部**非阻塞**进度条（`#refreshBar`），首次无数据才全屏遮罩。
+  - **海报默认不含自由现金流（980092）**：`cfg.en` 默认排除 display="自由现金流"，但 ord 保留（"全部"页仍显示）；老版本 931752/932365 代码会迁移到 980092。

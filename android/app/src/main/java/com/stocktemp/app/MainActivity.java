@@ -38,10 +38,14 @@ import android.content.ContentValues;
 import android.provider.MediaStore;
 import android.util.Base64;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -52,8 +56,17 @@ public class MainActivity extends AppCompatActivity {
     // iFinD token 管理
     private String accessToken = null;
     private long tokenExpiry = 0;
+    // 服务端返回的 access_token 到期（精确展示用）
+    private long accessTokenExpiresAt = 0;
+    private String accessTokenExpiryText = "";
 
     private static final String IFIND_BASE = "https://quantapi.51ifind.com/api/v1";
+    private static final SimpleDateFormat IFIND_DT_FMT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
+    private static final SimpleDateFormat MONTH_FMT = new SimpleDateFormat("yyyy-MM", Locale.US);
+    // 网络请求线程池：WebView @JavascriptInterface 是同步阻塞的，
+    // 若直接在桥内联网会卡死 JS 主线程（刷新时页面冻结、无法滚动）。
+    // 改为异步执行后，JS 不会被阻塞，可实时刷新进度条并保持页面可交互。
+    private java.util.concurrent.ExecutorService apiPool = null;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -75,6 +88,7 @@ public class MainActivity extends AppCompatActivity {
 
         prefs = getSharedPreferences("stocktemp", MODE_PRIVATE);
         mainHandler = new Handler(Looper.getMainLooper());
+        apiPool = java.util.concurrent.Executors.newFixedThreadPool(6);
 
         // 创建布局
         FrameLayout root = new FrameLayout(this);
@@ -138,6 +152,10 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (apiPool != null) {
+            apiPool.shutdownNow();
+            apiPool = null;
+        }
         if (webView != null) webView.destroy();
         super.onDestroy();
     }
@@ -171,7 +189,7 @@ public class MainActivity extends AppCompatActivity {
         return sb.toString();
     }
 
-    private String ensureToken() throws Exception {
+    private synchronized String ensureToken() throws Exception {
         if (accessToken != null && System.currentTimeMillis() < tokenExpiry) {
             return accessToken;
         }
@@ -208,8 +226,55 @@ public class MainActivity extends AppCompatActivity {
 
         JSONObject data = json.getJSONObject("data");
         accessToken = data.getString("access_token");
-        tokenExpiry = System.currentTimeMillis() + 6L * 24 * 3600 * 1000;  // 6天
+        // 用服务端返回的到期时间精确展示；失败时回退 6 天
+        accessTokenExpiryText = data.optString("expired_time", "");
+        long serverExpiry = 0;
+        if (!accessTokenExpiryText.isEmpty()) {
+            try {
+                serverExpiry = IFIND_DT_FMT.parse(accessTokenExpiryText).getTime();
+            } catch (Exception ignore) { /* 非标准格式忽略 */ }
+        }
+        if (serverExpiry > 0) {
+            accessTokenExpiresAt = serverExpiry;
+            tokenExpiry = serverExpiry - 60 * 1000;  // 提前1分钟过期兜底
+        } else {
+            accessTokenExpiresAt = System.currentTimeMillis() + 6L * 24 * 3600 * 1000;
+            tokenExpiry = accessTokenExpiresAt;
+        }
+        recordCall("token");
         return accessToken;
+    }
+
+    // ━━━ 本机调用量统计（跨月自动重置当月计数）━━━
+    private void ensureUsageMonth() {
+        String month = MONTH_FMT.format(new Date());
+        String stored = prefs.getString("usage_month", "");
+        if (!month.equals(stored)) {
+            prefs.edit()
+                .putString("usage_month", month)
+                .putLong("usage_month_count", 0)
+                .putString("usage_month_eps", "{}")
+                .apply();
+        }
+    }
+
+    private void recordCall(String endpoint) {
+        try {
+            ensureUsageMonth();
+            long total = prefs.getLong("usage_total", 0) + 1;
+            long monthCount = prefs.getLong("usage_month_count", 0) + 1;
+            JSONObject mEp = new JSONObject(prefs.getString("usage_month_eps", "{}"));
+            mEp.put(endpoint, mEp.optInt(endpoint, 0) + 1);
+            JSONObject allEp = new JSONObject(prefs.getString("usage_all_eps", "{}"));
+            allEp.put(endpoint, allEp.optInt(endpoint, 0) + 1);
+            prefs.edit()
+                .putLong("usage_total", total)
+                .putLong("usage_month_count", monthCount)
+                .putString("usage_month_eps", mEp.toString())
+                .putString("usage_all_eps", allEp.toString())
+                .putLong("usage_updated", System.currentTimeMillis())
+                .apply();
+        } catch (Exception ignore) { /* 统计失败不影响主流程 */ }
     }
 
     // ━━━ JS 调用的接口 ━━━
@@ -286,14 +351,72 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(MainActivity.this, msg, Toast.LENGTH_SHORT).show());
         }
 
+        // ━━━ 异步桥（JS 传回调 id，结果通过 window.__ifindOnResult(id, json) 送回）━━━
+        // 同步桥会阻塞 JS 主线程：152 次网络请求期间页面冻结、无法滚动、无进度。
+        // 网络请求改在线程池执行 + 主线程回传，JS 全程不阻塞。
+        private void postResult(String cbId, String resultJson) {
+            if (cbId == null || cbId.isEmpty()) return;
+            final String safeId = cbId.replaceAll("[^A-Za-z0-9_]", "_");
+            final String text = resultJson == null ? "" : resultJson;
+            final String payload;
+            try {
+                payload = JSONObject.quote(text);
+            } catch (Exception qe) {
+                // 兜底转义（极少触发）
+                payload = "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+            }
+            mainHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (webView != null) {
+                        webView.evaluateJavascript(
+                            "window.__ifindOnResult&&window.__ifindOnResult('" + safeId + "'," + payload + ");",
+                            null);
+                    }
+                }
+            });
+        }
+
+        private void runAsync(final String cbId, final java.util.concurrent.Callable<String> task) {
+            if (apiPool == null) {
+                postResult(cbId, errorJson("引擎未就绪"));
+                return;
+            }
+            try {
+                apiPool.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            postResult(cbId, task.call());
+                        } catch (Exception e) {
+                            postResult(cbId, errorJson(e.getMessage() == null ? "error" : e.getMessage()));
+                        }
+                    }
+                });
+            } catch (Exception e) {
+                postResult(cbId, errorJson("任务启动失败"));
+            }
+        }
+
         /**
-         * 获取指数历史行情 (同步，JS 需在 Promise 中调用)
+         * 获取指数历史行情（异步）
          * 返回 JSON: { dates:[], close:[], volume:[], amount:[], pe:[], ... } 或 { error: "..." }
          */
         @JavascriptInterface
-        public String fetchIndexHistory(String ifindCode, String startDate, String endDate) {
+        public void fetchIndexHistory(final String ifindCode, final String startDate,
+                                      final String endDate, final String cbId) {
+            runAsync(cbId, new java.util.concurrent.Callable<String>() {
+                @Override
+                public String call() {
+                    return fetchIndexHistoryImpl(ifindCode, startDate, endDate);
+                }
+            });
+        }
+
+        private String fetchIndexHistoryImpl(String ifindCode, String startDate, String endDate) {
             try {
                 String token = ensureToken();
+                recordCall("history");
                 JSONObject para = new JSONObject();
                 para.put("codes", ifindCode);
                 para.put("indicators", "preClose,open,high,low,close,changeRatio,volume,amount,turnover_ratio,pe_ttm_index");
@@ -378,20 +501,32 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * 获取融资余额 (同步)
+         * 获取融资余额（异步）
          * 返回 JSON: { dates:[], margin_balance:[] } 或 { error: "..." }
          */
         @JavascriptInterface
-        public String fetchMargin(String ifindCode, String startDate, String endDate) {
+        public void fetchMargin(final String ifindCode, final String startDate,
+                                final String endDate, final String cbId) {
+            runAsync(cbId, new java.util.concurrent.Callable<String>() {
+                @Override
+                public String call() {
+                    return fetchMarginImpl(ifindCode, startDate, endDate);
+                }
+            });
+        }
+
+        private String fetchMarginImpl(String ifindCode, String startDate, String endDate) {
             try {
                 String token = ensureToken();
+                recordCall("margin");
                 JSONObject para = new JSONObject();
                 para.put("codes", ifindCode);
                 para.put("startdate", startDate.replace("-", ""));
                 para.put("enddate", endDate.replace("-", ""));
                 JSONObject fp = new JSONObject();
                 fp.put("Days", "Tradedays");
-                fp.put("Fill", "Previous");
+                // 融资余额 T+1 公布：Fill:Blank（未公布的交易日返回空），避免把前一交易日余额填充成"有数据"
+                fp.put("Fill", "Blank");
                 para.put("functionpara", fp);
                 JSONArray indi = new JSONArray();
                 JSONObject indiObj = new JSONObject();
@@ -465,13 +600,23 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * 获取沪深两市融资统计。净买入直接使用 p03438_f013，避免余额差分改变口径。
+         * 获取沪深两市融资统计（异步）。净买入直接使用 p03438_f013，避免余额差分改变口径。
          * 返回 JSON: { dates:[], margin_balance:[], net_buy:[] } 或 { error: "..." }
          */
         @JavascriptInterface
-        public String fetchMarginMarketStats(String startDate, String endDate) {
+        public void fetchMarginMarketStats(final String startDate, final String endDate, final String cbId) {
+            runAsync(cbId, new java.util.concurrent.Callable<String>() {
+                @Override
+                public String call() {
+                    return fetchMarginMarketStatsImpl(startDate, endDate);
+                }
+            });
+        }
+
+        private String fetchMarginMarketStatsImpl(String startDate, String endDate) {
             try {
                 String token = ensureToken();
+                recordCall("data_pool");
                 JSONObject para = new JSONObject();
                 para.put("reportname", "p03438");
 
@@ -553,14 +698,25 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * 通用 date_sequence 接口（同步）
+         * 通用 date_sequence 接口（异步）
          * 支持多代码、多指标，用于数据 Tab 的 ETF 净流入等
          * 返回 JSON: { tables: [{ thscode, time:[], table: { indicator: [vals] } }] } 或 { error: "..." }
          */
         @JavascriptInterface
-        public String fetchDateSequence(String codes, String indicator, String startDate, String endDate, String indiparamsJson) {
+        public void fetchDateSequence(final String codes, final String indicator, final String startDate,
+                                      final String endDate, final String indiparamsJson, final String cbId) {
+            runAsync(cbId, new java.util.concurrent.Callable<String>() {
+                @Override
+                public String call() {
+                    return fetchDateSequenceImpl(codes, indicator, startDate, endDate, indiparamsJson);
+                }
+            });
+        }
+
+        private String fetchDateSequenceImpl(String codes, String indicator, String startDate, String endDate, String indiparamsJson) {
             try {
                 String token = ensureToken();
+                recordCall("date_sequence");
                 JSONObject para = new JSONObject();
                 para.put("codes", codes);
                 para.put("startdate", startDate.replace("-", ""));
@@ -651,6 +807,148 @@ public class MainActivity extends AppCompatActivity {
                 return "{\"valid\":false,\"error\":\"" + escapeJson(e.getMessage()) + "\"}";
             } catch (Exception e) {
                 return "{\"valid\":false,\"error\":\"" + escapeJson(e.getMessage()) + "\"}";
+            }
+        }
+
+        // ━━━ 原生文件缓存（供 JS 存储大体积历史序列，突破 localStorage 配额限制）━━━
+        private File cacheDir() {
+            File dir = new File(getFilesDir(), "ifind_cache");
+            if (!dir.exists()) dir.mkdirs();
+            return dir;
+        }
+
+        private String sanitizeKey(String key) {
+            return key.replaceAll("[^A-Za-z0-9._-]", "_");
+        }
+
+        private File cacheFile(String key) {
+            return new File(cacheDir(), sanitizeKey(key) + ".json");
+        }
+
+        @JavascriptInterface
+        public String cacheRead(String key) {
+            try {
+                File f = cacheFile(key);
+                if (!f.exists() || f.length() > 64L * 1024 * 1024) return "";
+                byte[] buf = new byte[(int) f.length()];
+                try (FileInputStream in = new FileInputStream(f)) {
+                    int off = 0;
+                    while (off < buf.length) {
+                        int n = in.read(buf, off, buf.length - off);
+                        if (n < 0) break;
+                        off += n;
+                    }
+                }
+                return new String(buf, 0, off, "UTF-8");
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        @JavascriptInterface
+        public void cacheWrite(String key, String json) {
+            try {
+                File f = cacheFile(key);
+                try (FileOutputStream out = new FileOutputStream(f)) {
+                    out.write(json.getBytes("UTF-8"));
+                }
+            } catch (Exception ignore) { /* 写失败只影响缓存，不影响主流程 */ }
+        }
+
+        @JavascriptInterface
+        public String cacheKeys(String prefix) {
+            try {
+                JSONArray arr = new JSONArray();
+                String[] names = cacheDir().list();
+                if (names != null) {
+                    for (String n : names) {
+                        if (!n.endsWith(".json")) continue;
+                        String k = n.substring(0, n.length() - 5);
+                        if (prefix == null || prefix.isEmpty() || k.startsWith(prefix)) arr.put(k);
+                    }
+                }
+                return arr.toString();
+            } catch (Exception e) {
+                return "[]";
+            }
+        }
+
+        @JavascriptInterface
+        public void cacheRemove(String key) {
+            try {
+                File f = cacheFile(key);
+                if (f.exists()) f.delete();
+            } catch (Exception ignore) { /* ignore */ }
+        }
+
+        // ━━━ Token 信息（到期时间等，供设置面板展示）━━━
+        private String base64Json(String seg) {
+            try {
+                String t = seg.replace('-', '+').replace('_', '/');
+                while (t.length() % 4 != 0) t += "=";
+                byte[] b;
+                try {
+                    b = android.util.Base64.decode(t, android.util.Base64.DEFAULT);
+                } catch (Exception e) {
+                    b = android.util.Base64.decode(seg, android.util.Base64.URL_SAFE);
+                }
+                return new String(b, "UTF-8");
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        @JavascriptInterface
+        public String getTokenInfo() {
+            try {
+                JSONObject o = new JSONObject();
+                String rt = prefs.getString("refresh_token", "");
+                o.put("hasToken", !rt.isEmpty());
+                o.put("accessTokenExpiryText", accessTokenExpiryText);
+                o.put("accessTokenExpiryMs", accessTokenExpiresAt);
+                String signTime = "", refreshExp = "", userId = "";
+                if (!rt.isEmpty()) {
+                    String[] parts = rt.split("\\.");
+                    try {
+                        if (parts.length >= 1) {
+                            JSONObject seg0 = new JSONObject(base64Json(parts[0]));
+                            signTime = seg0.optString("sign_time", "");
+                        }
+                        if (parts.length >= 2) {
+                            JSONObject seg1 = new JSONObject(base64Json(parts[1]));
+                            userId = seg1.optString("uid", "");
+                            JSONObject user = seg1.optJSONObject("user");
+                            if (user != null) {
+                                refreshExp = user.optString("refreshTokenExpiredTime", "");
+                                if (userId.isEmpty()) userId = user.optString("userId", "");
+                            }
+                        }
+                    } catch (Exception ignore) { /* 解析失败仅留空 */ }
+                }
+                o.put("signTime", signTime);
+                o.put("refreshTokenExpiryText", refreshExp);
+                o.put("userId", userId);
+                return o.toString();
+            } catch (Exception e) {
+                return errorJson(e.getMessage());
+            }
+        }
+
+        // ━━━ 本机调用量统计 ━━━
+        @JavascriptInterface
+        public String getUsage() {
+            try {
+                ensureUsageMonth();
+                JSONObject o = new JSONObject();
+                o.put("total", prefs.getLong("usage_total", 0));
+                o.put("month", prefs.getString("usage_month", ""));
+                o.put("monthCount", prefs.getLong("usage_month_count", 0));
+                o.put("allEndpoints", new JSONObject(prefs.getString("usage_all_eps", "{}")));
+                o.put("monthEndpoints", new JSONObject(prefs.getString("usage_month_eps", "{}")));
+                o.put("updatedAt", prefs.getLong("usage_updated", 0));
+                return o.toString();
+            } catch (Exception e) {
+                return errorJson(e.getMessage());
             }
         }
 

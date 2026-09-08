@@ -205,6 +205,12 @@ body{touch-action:pan-y;overscroll-behavior:none}
 @keyframes spin{to{transform:rotate(360deg)}}
 .loading-text{font-size:14px;color:#86868B;font-weight:500}
 .loading-sub{font-size:11px;color:#AEAEB2}
+/* 顶部刷新进度条（非阻塞：刷新时页面仍可滑动/交互） */
+.refresh-progress{position:absolute;top:48px;left:10px;right:10px;z-index:285;background:rgba(255,255,255,0.97);border:1px solid #E5E5EA;border-radius:12px;padding:8px 10px;box-shadow:0 2px 10px rgba(31,41,55,.08);display:flex;align-items:center;gap:10px}
+.refresh-progress.hidden{display:none}
+.refresh-progress-track{flex:1;height:6px;border-radius:3px;background:#E5E5EA;overflow:hidden}
+.refresh-progress-fill{height:100%;width:0%;border-radius:3px;background:#007AFF;transition:width .25s ease}
+.refresh-progress-text{font-size:11px;color:#007AFF;font-weight:600;white-space:nowrap}
 .margin-notice{margin:0 0 12px;padding:10px 12px 10px 14px;border-radius:12px;background:#F8FAFC;color:#475569;font-size:12px;line-height:1.5;font-weight:500;border:1px solid #E2E8F0;position:relative}
 .margin-notice::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;border-radius:12px 0 0 12px;background:#FF3B30}
 .margin-notice strong{color:#B42318}
@@ -520,6 +526,12 @@ body{touch-action:pan-y;overscroll-behavior:none}
         <div class="loading-sub">首次加载约需30秒</div>
     </div>
 
+    <!-- 顶部刷新进度条（已有数据时刷新使用，非阻塞可滑动） -->
+    <div class="refresh-progress hidden" id="refreshBar">
+        <div class="refresh-progress-track"><div class="refresh-progress-fill" id="refreshBarFill"></div></div>
+        <div class="refresh-progress-text" id="refreshBarText">0/0</div>
+    </div>
+
     <!-- 下载遮罩 -->
     <div class="download-overlay" id="downloadOverlay">
         <div class="loading-spinner"></div>
@@ -531,11 +543,11 @@ body{touch-action:pan-y;overscroll-behavior:none}
 <!-- end phone-wrapper -->
 
 <!-- 加载 JS 模块 -->
-<script src="js/config.js?v=20260822"></script>
-<script src="js/indicators.js?v=20260822"></script>
-<script src="js/scoring.js?v=20260822"></script>
-<script src="js/fetch.js?v=20260822"></script>
-<script src="js/app.js?v=20260822"></script>
+<script src="js/config.js?v=20260908"></script>
+<script src="js/indicators.js?v=20260908"></script>
+<script src="js/scoring.js?v=20260908"></script>
+<script src="js/fetch.js?v=20260908"></script>
+<script src="js/app.js?v=20260908"></script>
 
 <script>
 // 初始化

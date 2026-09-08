@@ -39,6 +39,21 @@ var App = (function () {
     var SK = "a_stock_cfg_v6";
     var cfg = loadCfg();
 
+    // 默认不在海报勾选"自由现金流"（980092）。逻辑：海报只含 cfg.en，
+    // "全部"页始终显示 ord 里全部指数 → 从 en 排除即海报默认不含它，但仍可手动勾选。
+    function isFcfDefaultOff(code) {
+        var idx = AppConfig.getIndexByCode(code);
+        return !!(idx && idx.display === "自由现金流");
+    }
+
+    function defaultPosterCodes() {
+        return AppConfig.getAllIndexes()
+            .map(function (x) { return x.code; })
+            .filter(function (code) { return !isFcfDefaultOff(code); });
+    }
+
+    var FCF_FLAG = "a_stock_cfg_fcf_default_v1";  // 一次性迁移：旧配置海报里去掉自由现金流
+
     function loadCfg() {
         var allCodes = AppConfig.getAllIndexes().map(function (x) { return x.code; });
         try {
@@ -46,10 +61,12 @@ var App = (function () {
             if (s) {
                 var c = JSON.parse(s);
                 if (c.en && c.ord) {
+                    // 老版本自由现金流内部代码可能为 931752 / 932365，统一迁移到 980092
+                    var legacyFcf = { "931752": true, "932365": true };
                     var migrateCodes = function (codes) {
                         var seen = {};
                         return (codes || []).map(function (code) {
-                            return code === "980092" ? "931752" : code;
+                            return legacyFcf[code] ? "980092" : code;
                         }).filter(function (code) {
                             if (allCodes.indexOf(code) < 0 || seen[code]) return false;
                             seen[code] = true;
@@ -62,15 +79,21 @@ var App = (function () {
                     allCodes.forEach(function (code) {
                         if (c.ord.indexOf(code) < 0) c.ord.push(code);
                     });
+                    // 一次性把自由现金流从海报默认勾选中移除（保留在"全部"页）
+                    if (!localStorage.getItem(FCF_FLAG)) {
+                        c.en = c.en.filter(function (code) { return !isFcfDefaultOff(code); });
+                        c.extremeEn = (c.extremeEn || []).filter(function (code) { return !isFcfDefaultOff(code); });
+                        try { localStorage.setItem(FCF_FLAG, "1"); } catch (e) { /* ignore */ }
+                    }
                     localStorage.setItem(SK, JSON.stringify(c));
                     return c;
                 }
             }
         } catch (e) { /* ignore */ }
         return {
-            en: allCodes.slice(),
-            ord: allCodes.slice(),
-            extremeEn: allCodes.slice(),  // 极端板块海报可选名单
+            en: defaultPosterCodes(),       // 海报默认不含自由现金流
+            ord: allCodes.slice(),          // "全部"页始终全部显示
+            extremeEn: allCodes.slice(),    // 极端板块海报可选名单
         };
     }
 
@@ -228,23 +251,107 @@ var App = (function () {
         return latest;
     }
 
-    function loadDataSnapshot() {
-        CACHE_SNAPSHOT_DATA = null;
-        CACHE_SNAPSHOT_DATE = "";
+    // ━━━ 存储后端（Android=原生文件 / 其余=localStorage）━━━
+    // 最新数据快照达 3~4MB，远超 WebView localStorage 配额 → 旧版保存静默失败，
+    // 重启后退回内置旧数据（曾出现"回到8月20号"）。改用文件存储后快照可靠持久。
+    var HAS_NATIVE_CACHE = !!(window.Android && window.Android.cacheRead &&
+        window.Android.cacheWrite && window.Android.cacheKeys && window.Android.cacheRemove);
+
+    function storeGet(key) {
         try {
-            var raw = localStorage.getItem(DATA_CACHE_KEY);
-            if (!raw) return false;
-            var snapshot = JSON.parse(raw);
-            if (!snapshot || snapshot.version !== 2 || !snapshot.data) return false;
-            var codes = Object.keys(snapshot.data);
-            if (!codes.length) return false;
-            DATA = snapshot.data;
-            CACHE_SNAPSHOT_DATA = snapshot.data;
-            CACHE_SNAPSHOT_DATE = maxDataDate(snapshot.data);
+            if (HAS_NATIVE_CACHE) {
+                var s = window.Android.cacheRead(key);
+                return s ? JSON.parse(s) : null;
+            }
+            var raw = localStorage.getItem(key);
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function storeSet(key, data) {
+        try {
+            if (HAS_NATIVE_CACHE) {
+                window.Android.cacheWrite(key, JSON.stringify(data));
+                return true;
+            }
+            localStorage.setItem(key, JSON.stringify(data));
             return true;
         } catch (e) {
             return false;
         }
+    }
+
+    function storeRemove(key) {
+        try {
+            if (HAS_NATIVE_CACHE) window.Android.cacheRemove(key);
+        } catch (e) { /* ignore */ }
+        // 兼容：旧版本存在 localStorage 快照时一并清掉
+        try { localStorage.removeItem(key); } catch (e) { /* ignore */ }
+    }
+
+    // ━━━ 同交易日刷新限流（gate）━━━
+    var REFRESH_GATE_KEY = "a_stock_refresh_gate_v1";
+
+    function ymdStr(d) {
+        return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" +
+            String(d.getDate()).padStart(2, "0");
+    }
+
+    function readRefreshGate() {
+        try {
+            var g = JSON.parse(localStorage.getItem(REFRESH_GATE_KEY) || "null");
+            return g && typeof g === "object" ? g : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function writeRefreshGate(g) {
+        try { localStorage.setItem(REFRESH_GATE_KEY, JSON.stringify(g)); } catch (e) { /* ignore */ }
+    }
+
+    function clearRefreshGate() {
+        try { localStorage.removeItem(REFRESH_GATE_KEY); } catch (e) { /* ignore */ }
+    }
+
+    // 当前可达目标数据日期（getLatestTradeDate=上一交易日，App 恒过滤"今天"）
+    function refreshTargetDate() {
+        return getLatestTradeDate();
+    }
+
+    function refreshGateBlocked() {
+        var g = readRefreshGate();
+        if (!g || g.errors) return false;
+        var target = refreshTargetDate();
+        // 已刷到目标数据日期 → 当天全天拦截重复刷新
+        var fullOk = g.target === target && g.achieved && g.achieved >= target;
+        if (fullOk) return true;
+        // 未完全刷到（如融资余额当天还没公布）→ 用 10 分钟冷却防连点，数据公布后可再刷
+        var recent = g.ts && (Date.now() - g.ts) < 10 * 60 * 1000 &&
+            g.runDate === ymdStr(new Date());
+        return !!recent;
+    }
+
+    function loadDataSnapshot() {
+        CACHE_SNAPSHOT_DATA = null;
+        CACHE_SNAPSHOT_DATE = "";
+        var snapshot = storeGet(DATA_CACHE_KEY);
+        // 兼容旧版：localStorage 里的历史快照（升级前保存的），native 为空时回读一次
+        if (!snapshot) {
+            try {
+                var raw = localStorage.getItem(DATA_CACHE_KEY);
+                snapshot = raw ? JSON.parse(raw) : null;
+            } catch (e) { snapshot = null; }
+        }
+        if (!snapshot || snapshot.version !== 2 || !snapshot.data) return false;
+        var codes = Object.keys(snapshot.data);
+        if (!codes.length) return false;
+        DATA = snapshot.data;
+        CACHE_SNAPSHOT_DATA = snapshot.data;
+        CACHE_SNAPSHOT_DATE = maxDataDate(snapshot.data);
+        return true;
     }
 
     function frozenItemToData(item) {
@@ -307,19 +414,15 @@ var App = (function () {
 
     function saveDataSnapshot() {
         if (!Object.keys(DATA).length) return;
-        try {
-            localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({
-                version: 2,
-                savedAt: Date.now(),
-                data: DATA,
-            }));
-        } catch (e) {
-            // 快照过大时保留原始接口缓存，不影响本次展示。
-        }
+        storeSet(DATA_CACHE_KEY, {
+            version: 2,
+            savedAt: Date.now(),
+            data: DATA,
+        });
     }
 
     function clearDataSnapshot() {
-        try { localStorage.removeItem(DATA_CACHE_KEY); } catch (e) { /* ignore */ }
+        storeRemove(DATA_CACHE_KEY);
         CACHE_SNAPSHOT_DATA = null;
         CACHE_SNAPSHOT_DATE = "";
     }
@@ -380,6 +483,14 @@ var App = (function () {
             showLoading(true);
         }
 
+        // 同交易日限流：今天已成功刷新到目标数据日期且无错误 → 跳过重复手动刷新，
+        // 避免每点一次刷新就全量拉取（~150次请求），防止调用量失控。
+        if (force && refreshGateBlocked()) {
+            showLoading(false);
+            showToast("今日数据已是最新，已自动跳过重复刷新");
+            return;
+        }
+
         if (REFRESH_IN_PROGRESS) return;
         REFRESH_IN_PROGRESS = true;
 
@@ -400,6 +511,7 @@ var App = (function () {
             if (completed >= total) {
                 REFRESH_IN_PROGRESS = false;
                 showLoading(false);
+                hideRefreshBar();
                 if (successCount === 0) {
                     showToast(IS_FROZEN_BUILD ? "刷新失败，请检查Token或网络" : "数据获取失败，请检查网络");
                     return;
@@ -408,6 +520,13 @@ var App = (function () {
                 updateDatePickerMax();
                 renderAll();
                 saveDataSnapshot();
+                writeRefreshGate({
+                    runDate: ymdStr(new Date()),
+                    target: refreshTargetDate(),
+                    achieved: latestDataDateStr(),
+                    errors: errors.length > 0,
+                    ts: Date.now(),
+                });
                 if (CURRENT_TAB === "data" && CHART_DATA) renderDataCharts();
                 if (errors.length > 0) {
                     console.warn("数据获取警告:", errors);
@@ -418,6 +537,8 @@ var App = (function () {
             }
         }
 
+        // 有旧数据时用顶部非阻塞进度条（页面可滑动）；首次无数据则全屏遮罩
+        if (hasData) showRefreshBar();
         indexes.forEach(function (idx) {
             Fetch.fetchAndCalculate(idx, start, end)
                 .then(function (data) {
@@ -1470,14 +1591,10 @@ var App = (function () {
     }
 
     function fetchMarginChartAPI(start, end) {
-        return new Promise(function (resolve) {
-            try {
-                var raw = window.Android.fetchMarginMarketStats(start, end);
-                var data = JSON.parse(raw);
-                if (!data || data.error || !data.dates) {
-                    resolve([]);
-                    return;
-                }
+        if (!window.__ifindCall) return Promise.resolve([]);
+        return window.__ifindCall("fetchMarginMarketStats", [start, end])
+            .then(function (data) {
+                if (!data || data.error || !data.dates) return [];
                 var rows = [];
                 for (var i = 0; i < data.dates.length; i++) {
                     var balance = data.margin_balance ? data.margin_balance[i] : null;
@@ -1500,22 +1617,18 @@ var App = (function () {
                         ? Math.max(0, peak - row.balance)
                         : null;
                 });
-                resolve(rows);
-            } catch (e) {
-                resolve([]);
-            }
-        });
+                return rows;
+            })
+            .catch(function () { return []; });
     }
 
     function fetchEtfChartAPI(start, end) {
         var codes = ETF_IFIND_CODES.join(",");
-        return new Promise(function (resolve) {
-            try {
-                var raw = window.Android.fetchDateSequence(codes, "ths_netcashflow_fund", start, end);
-                var resp = JSON.parse(raw);
-                if (resp.error || !resp.tables || !resp.tables.length) {
-                    resolve({ rows: [] });
-                    return;
+        if (!window.__ifindCall) return Promise.resolve({ rows: [] });
+        return window.__ifindCall("fetchDateSequence", [codes, "ths_netcashflow_fund", start, end, null])
+            .then(function (resp) {
+                if (!resp || resp.error || !resp.tables || !resp.tables.length) {
+                    return { rows: [] };
                 }
                 var daily = {};
                 for (var t = 0; t < resp.tables.length; t++) {
@@ -1541,11 +1654,9 @@ var App = (function () {
                 }).map(function (d) {
                     return { date: d, total: Math.round(daily[d].total * 100) / 100 };
                 });
-                resolve({ rows: rows });
-            } catch (e) {
-                resolve({ rows: [] });
-            }
-        });
+                return { rows: rows };
+            })
+            .catch(function () { return { rows: [] }; });
     }
 
     function loadChartData(force) {
@@ -2048,7 +2159,9 @@ var App = (function () {
         html += '<div id="tokenStatus" style="font-size:12px;color:#86868B;margin-bottom:8px">检查中...</div>';
         html += '<div style="display:flex;gap:8px"><input type="text" id="tokenInput" placeholder="粘贴新token..." style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid #E5E5EA;font-size:13px;outline:none">';
         html += '<button onclick="App.updateToken()" style="padding:8px 14px;border-radius:8px;background:#007AFF;color:#fff;border:none;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">更新</button></div>';
-        html += '<div style="font-size:10px;color:#AEAEB2;margin-top:4px">token有效期约7天，过期后需重新获取</div>';
+        html += '<div style="font-size:10px;color:#AEAEB2;margin-top:4px">refresh_token 过期后需重新获取；本机调用量随自然月清零</div>';
+        html += '<div id="tokenInfoBox" style="font-size:11px;line-height:1.8;color:#3A3A3C;margin-top:10px;padding:10px 12px;border-radius:10px;background:#F5F5F7;word-break:break-all"></div>';
+        html += '<button onclick="App.rebuildAll()" style="margin-top:8px;width:100%;padding:8px 10px;border-radius:8px;background:#FFF4E5;color:#FF9500;border:none;font-size:11px;font-weight:600;cursor:pointer">⚠️ 立即重新拉取（忽略今日限次）</button>';
         html += '</div>';
 
         document.getElementById("settingsBody").innerHTML = html;
@@ -2187,7 +2300,7 @@ var App = (function () {
     function resetCfg() {
         var allCodes = AppConfig.getAllIndexes().map(function (x) { return x.code; });
         cfg = {
-            en: allCodes.slice(),
+            en: defaultPosterCodes(),       // 海报默认不含自由现金流
             ord: allCodes.slice(),
             extremeEn: allCodes.slice(),
         };
@@ -2197,21 +2310,79 @@ var App = (function () {
     }
 
     // ━━━ Token 管理 ━━━
+    function tokenDaysLeft(text, nowMs) {
+        if (!text) return null;
+        var t = String(text).replace(" ", "T");
+        if (t.length === 10) t += "T00:00:00";
+        var d = new Date(t);
+        if (isNaN(d.getTime())) return null;
+        return Math.floor((d.getTime() - nowMs) / 86400000);
+    }
+
     function checkTokenStatus() {
-        Fetch.checkToken()
-            .then(function (res) {
-                var el = document.getElementById("tokenStatus");
-                if (!el) return;
-                if (res.valid) {
-                    el.innerHTML = '<span style="color:#34C759">✅ token有效</span>';
-                } else {
-                    el.innerHTML = '<span style="color:#FF3B30">❌ ' + (res.error || "token无效") + '</span>';
-                }
-            })
-            .catch(function () {
-                var el = document.getElementById("tokenStatus");
-                if (el) el.textContent = "无法连接服务";
+        var el = document.getElementById("tokenStatus");
+        var box = document.getElementById("tokenInfoBox");
+        if (!el) return;
+        var native = !!(window.Android && window.Android.getTokenInfo && window.Android.getUsage);
+        if (!native) {
+            el.innerHTML = '<span style="color:#AEAEB2">浏览器/预览模式：token 到期与本机用量仅在安装版展示</span>';
+            if (box) box.innerHTML = "";
+            return;
+        }
+
+        var info = {};
+        var usage = null;
+        try { info = JSON.parse(window.Android.getTokenInfo()); } catch (e) { /* ignore */ }
+        try { usage = JSON.parse(window.Android.getUsage()); } catch (e) { /* ignore */ }
+
+        if (!info.hasToken) {
+            el.innerHTML = '<span style="color:#FF9500">⚠️ 未设置 Token，联网刷新功能不可用</span>';
+            if (box) box.innerHTML = "";
+            return;
+        }
+
+        el.innerHTML = '<span style="color:#34C759">✅ Token 已设置</span>';
+
+        var now = Date.now();
+        function dl(text) {
+            var d = tokenDaysLeft(text, now);
+            if (d === null) return "";
+            if (d < 0) return ' · <span style="color:#FF3B30">已过期</span>';
+            if (d === 0) return " · 今天到期";
+            return " · 剩 " + d + " 天";
+        }
+        function row(k, v) {
+            return '<div style="display:flex;justify-content:space-between;gap:10px">' +
+                '<span style="color:#86868B;flex-shrink:0">' + k + "</span>" +
+                '<span style="text-align:right">' + v + "</span></div>";
+        }
+
+        var h = "";
+        if (info.userId) h += row("账号", info.userId);
+        if (info.signTime) h += row("Token签发", info.signTime);
+        if (info.refreshTokenExpiryText) h += row("refresh到期", info.refreshTokenExpiryText + dl(info.refreshTokenExpiryText));
+        if (info.accessTokenExpiryText) h += row("access到期", info.accessTokenExpiryText + dl(info.accessTokenExpiryText));
+        else h += row("access到期", "联网获取后显示");
+
+        if (usage) {
+            var EP_LABEL = {
+                token: "获取Token",
+                history: "指数行情",
+                margin: "融资余额",
+                date_sequence: "指标序列(换手/RSI/ETF)",
+                data_pool: "两市融资汇总",
+            };
+            h += '<div style="border-top:1px solid #E5E5EA;margin:6px 0"></div>';
+            h += row("本月调用(本机)", String(usage.monthCount) + " 次");
+            var sub = usage.monthEndpoints || {};
+            Object.keys(EP_LABEL).forEach(function (k) {
+                var n = sub[k];
+                if (n) h += row(" · " + EP_LABEL[k], String(n) + " 次");
             });
+            h += row("累计(本机)", String(usage.total) + " 次");
+            h += '<div style="font-size:10px;color:#AEAEB2;margin-top:6px">本机统计口径；iFinD 后台实际消耗以官方为准。本月自动按自然月清零。</div>';
+        }
+        if (box) box.innerHTML = h;
     }
 
     function updateToken() {
@@ -2224,6 +2395,7 @@ var App = (function () {
                     input.value = "";
                     checkTokenStatus();
                     clearDataSnapshot();
+                    clearRefreshGate();   // 换新 token 后允许立即全量拉一次
                     fetchLocal(true);
                 } else {
                     showToast("❌ " + (res.error || "更新失败"));
@@ -2238,9 +2410,29 @@ var App = (function () {
         if (el) el.classList.toggle("hidden", !show);
     }
 
+    // 顶部非阻塞刷新进度条（已有数据刷新时显示，页面仍可滑动/交互）
+    function showRefreshBar() {
+        var bar = document.getElementById("refreshBar");
+        if (bar) bar.classList.remove("hidden");
+        var fill = document.getElementById("refreshBarFill");
+        if (fill) fill.style.width = "0%";
+        var t = document.getElementById("refreshBarText");
+        if (t) t.textContent = "0/0";
+    }
+
+    function hideRefreshBar() {
+        var bar = document.getElementById("refreshBar");
+        if (bar) bar.classList.add("hidden");
+    }
+
     function updateLoadingProgress(current, total) {
         var el = document.getElementById("loadingText");
         if (el) el.textContent = "正在计算 " + current + "/" + total + "...";
+        var pct = total > 0 ? Math.round(current / total * 100) : 0;
+        var fill = document.getElementById("refreshBarFill");
+        if (fill) fill.style.width = pct + "%";
+        var barText = document.getElementById("refreshBarText");
+        if (barText) barText.textContent = current + "/" + total + " · " + pct + "%";
     }
 
     function showToast(msg) {
@@ -2536,6 +2728,11 @@ var App = (function () {
         fetchLocal: fetchLocal,
         refreshData: function () {
             showToast("正在刷新市场数据...");
+            fetchLocal(true);
+        },
+        rebuildAll: function () {
+            clearRefreshGate();
+            showToast("正在强制重新拉取数据...");
             fetchLocal(true);
         },
         showToast: showToast,

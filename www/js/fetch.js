@@ -6,12 +6,119 @@
  *   浏览器:  通过 proxy.py 代理（开发模式）
  */
 
+// ━━━ 原生异步桥 ━━━
+// MainActivity 的 4 个网络方法已改异步：调用立即返回，结果经
+// window.__ifindOnResult(id, json) 回传。这样 JS 主线程不被 152 次网络请求
+// 阻塞——刷新期间页面可滑动、进度条能实时更新。
+(function () {
+    var seq = 0;
+    var map = {};
+    window.__ifindOnResult = function (id, raw) {
+        var h = map[id];
+        if (!h) return;
+        delete map[id];
+        var parsed = null;
+        try { parsed = JSON.parse(raw); } catch (e) { parsed = null; }
+        h(parsed);
+    };
+    window.__ifindCall = function (method, args) {
+        return new Promise(function (resolve) {
+            var id = "c" + (++seq);
+            map[id] = resolve;
+            var a = (args || []).slice();
+            a.push(id);
+            if (!window.Android || !window.Android[method]) {
+                delete map[id];
+                resolve(null);
+                return;
+            }
+            try {
+                window.Android[method].apply(window.Android, a);
+            } catch (e) {
+                delete map[id];
+                resolve(null);
+            }
+        });
+    };
+})();
+
 var Fetch = (function () {
     "use strict";
 
     var IS_ANDROID = !!(window.Android && window.Android.isAndroid());
     var CACHE_TTL_MS = 5 * 60 * 1000;
     var CACHE_OVERLAP_DAYS = 10;
+    // 原生文件缓存：Android 端历史序列（每指数每序列可达2年）远超 localStorage 配额，
+    // 落盘后刷新才能真正增量（只拉尾段），否则配额满→清缓存→反复整段重下。
+    var HAS_NATIVE_CACHE = !!(window.Android && window.Android.cacheRead &&
+        window.Android.cacheWrite && window.Android.cacheKeys && window.Android.cacheRemove);
+
+    // ━━━ 存储后端（Android=文件 / 其余=localStorage）━━━
+    function rawGet(key) {
+        try {
+            if (HAS_NATIVE_CACHE) {
+                var s = Android.cacheRead(key);
+                if (!s) return null;
+                return JSON.parse(s);
+            }
+            var raw = localStorage.getItem(key);
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function pruneSiblings(key) {
+        // 键内含日期区间（ifind_<prefix>_<code>_<start>_<end>），起始日期每天顺移会积累大量旧键。
+        // 每次写完仅保留本键（含合并后的全量历史），删掉同(prefix,code)的旧键，避免文件缓存无限增长。
+        try {
+            var m = key.match(/^(.*?)_\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}$/);
+            if (!m) return;
+            var base = m[1];
+            var keys = JSON.parse(Android.cacheKeys(base) || "[]");
+            for (var i = 0; i < keys.length; i++) {
+                if (keys[i] !== key) Android.cacheRemove(keys[i]);
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    function rawSet(key, data) {
+        try {
+            if (HAS_NATIVE_CACHE) {
+                Android.cacheWrite(key, JSON.stringify(data));
+                pruneSiblings(key);
+                return;
+            }
+            localStorage.setItem(key, JSON.stringify(data));
+        } catch (e) {
+            // 写入失败仅清理本键，不再删一半缓存（避免反复整段重下）
+            try {
+                if (HAS_NATIVE_CACHE) Android.cacheRemove(key);
+                else localStorage.removeItem(key);
+            } catch (e2) { /* ignore */ }
+        }
+    }
+
+    function rawKeys(prefix) {
+        var out = [];
+        try {
+            if (HAS_NATIVE_CACHE) {
+                return JSON.parse(Android.cacheKeys(prefix) || "[]");
+            }
+            for (var i = 0; i < localStorage.length; i++) {
+                var k = localStorage.key(i);
+                if (k && k.indexOf(prefix) === 0) out.push(k);
+            }
+        } catch (e) { /* ignore */ }
+        return out;
+    }
+
+    function rawRemove(key) {
+        try {
+            if (HAS_NATIVE_CACHE) Android.cacheRemove(key);
+            else localStorage.removeItem(key);
+        } catch (e) { /* ignore */ }
+    }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // localStorage 缓存
@@ -21,36 +128,22 @@ var Fetch = (function () {
     }
 
     function getCached(key) {
-        try {
-            var raw = localStorage.getItem(key);
-            if (!raw) return null;
-            return JSON.parse(raw);
-        } catch (e) {
-            return null;
-        }
+        return rawGet(key);
     }
 
     function setCache(key, data) {
-        try {
-            localStorage.setItem(key, JSON.stringify(data));
-        } catch (e) {
-            // localStorage 满了，清理旧缓存
-            clearOldCache();
-        }
+        rawSet(key, data);
     }
 
     function findCached(prefix, code, startDate) {
         var best = null;
         var base = "ifind_" + prefix + "_" + code + "_";
-        try {
-            for (var i = 0; i < localStorage.length; i++) {
-                var key = localStorage.key(i);
-                if (!key || key.indexOf(base) !== 0) continue;
-                var item = getCached(key);
-                if (!item || !item.dates || !item.dates.length) continue;
-                if (item.dates[0] <= startDate && (!best || item.dates[item.dates.length - 1] > best.dates[best.dates.length - 1])) best = item;
-            }
-        } catch (e) { /* ignore */ }
+        var keys = rawKeys(base);
+        for (var i = 0; i < keys.length; i++) {
+            var item = rawGet(keys[i]);
+            if (!item || !item.dates || !item.dates.length) continue;
+            if (item.dates[0] <= startDate && (!best || item.dates[item.dates.length - 1] > best.dates[best.dates.length - 1])) best = item;
+        }
         return best;
     }
 
@@ -107,15 +200,10 @@ var Fetch = (function () {
 
     function clearOldCache() {
         try {
-            var keys = [];
-            for (var i = 0; i < localStorage.length; i++) {
-                var k = localStorage.key(i);
-                if (k && k.indexOf("ifind_") === 0) keys.push(k);
-            }
-            // 删除一半旧缓存
+            var keys = rawKeys("ifind_");
             keys.sort();
             for (var j = 0; j < Math.floor(keys.length / 2); j++) {
-                localStorage.removeItem(keys[j]);
+                rawRemove(keys[j]);
             }
         } catch (e) { /* ignore */ }
     }
@@ -143,15 +231,11 @@ var Fetch = (function () {
             ? addDays(previous.dates[previous.dates.length - 1], -CACHE_OVERLAP_DAYS) : startDate;
         if (requestStart < startDate) requestStart = startDate;
 
-        if (IS_ANDROID) {
-            return new Promise(function (resolve) {
-                var raw = Android.fetchIndexHistory(ifindCode, requestStart, endDate);
-                try {
-                    var data = JSON.parse(raw);
-                    if (data.error) {
-                        resolve({ error: data.error });
-                        return;
-                    }
+        if (IS_ANDROID && window.__ifindCall) {
+            return window.__ifindCall("fetchIndexHistory", [ifindCode, requestStart, endDate])
+                .then(function (data) {
+                    if (!data) return { error: "无响应" };
+                    if (data.error) return data;
                     // 单位转换：iFinD amount=元 → 亿元, volume=股 → 万手
                     if (data.amount) {
                         data.amount = data.amount.map(function (v) {
@@ -169,11 +253,8 @@ var Fetch = (function () {
                         data._cachedAt = Date.now();
                         setCache(ck, data);
                     }
-                    resolve(data);
-                } catch (e) {
-                    resolve({ error: "解析失败: " + e.message });
-                }
-            });
+                    return data;
+                });
         } else {
             // 浏览器模式：走 proxy
             return fetch(AppConfig.PROXY_BASE + "/api/proxy/index_history", {
@@ -212,25 +293,18 @@ var Fetch = (function () {
             ? addDays(previous.dates[previous.dates.length - 1], -CACHE_OVERLAP_DAYS) : startDate;
         if (requestStart < startDate) requestStart = startDate;
 
-        if (IS_ANDROID) {
-            return new Promise(function (resolve) {
-                var raw = Android.fetchMargin(ifindCode, requestStart, endDate);
-                try {
-                    var data = JSON.parse(raw);
-                    if (data.error) {
-                        resolve({ error: data.error });
-                        return;
-                    }
+        if (IS_ANDROID && window.__ifindCall) {
+            return window.__ifindCall("fetchMargin", [ifindCode, requestStart, endDate])
+                .then(function (data) {
+                    if (!data) return { error: "无响应" };
+                    if (data.error) return data;
                     if (data.dates && data.dates.length > 0) {
                         data = mergeSeries(previous, data);
                         data._cachedAt = Date.now();
                         setCache(ck, data);
                     }
-                    resolve(data);
-                } catch (e) {
-                    resolve({ error: "解析失败: " + e.message });
-                }
-            });
+                    return data;
+                });
         } else {
             return fetch(AppConfig.PROXY_BASE + "/api/proxy/margin", {
                 method: "POST",
@@ -259,43 +333,27 @@ var Fetch = (function () {
     function fetchTurnoverRatio(ifindCode, startDate, endDate) {
         return cachedRangeFetch("turnover2", ifindCode, startDate, endDate,
             function (requestStart, requestEnd) {
-                if (IS_ANDROID) {
-                    return new Promise(function (resolve) {
-                try {
-                    var raw = Android.fetchDateSequence(
-                        ifindCode, "ths_turnover_ratio_index", requestStart, requestEnd, null
-                    );
-                    var data = JSON.parse(raw);
-                    if (data.error) {
-                        resolve({ dates: [], turnover_ratio: [] });
-                        return;
-                    }
-                    var tables = data.tables || [];
-                    if (tables.length === 0 || !tables[0].table) {
-                        resolve({ dates: [], turnover_ratio: [] });
-                        return;
-                    }
-                    var tbl = tables[0].table;
-                    var vals = tbl["ths_turnover_ratio_index"] || [];
-                    var dates = tables[0].time || [];
-
-                    var hasValid = false;
-                    var parsed = vals.map(function (v) {
-                        if (v === null || v === "null" || (typeof v === "number" && isNaN(v))) return null;
-                        hasValid = true;
-                        return v;
-                    });
-
-                    if (!hasValid) {
-                        resolve({ dates: [], turnover_ratio: [] });
-                        return;
-                    }
-
-                    resolve({ dates: dates, turnover_ratio: parsed });
-                } catch (e) {
-                    resolve({ dates: [], turnover_ratio: [] });
-                }
-                    });
+                if (IS_ANDROID && window.__ifindCall) {
+                    return window.__ifindCall("fetchDateSequence",
+                        [ifindCode, "ths_turnover_ratio_index", requestStart, requestEnd, null])
+                        .then(function (data) {
+                            if (!data || data.error) return { dates: [], turnover_ratio: [] };
+                            var tables = data.tables || [];
+                            if (tables.length === 0 || !tables[0].table) {
+                                return { dates: [], turnover_ratio: [] };
+                            }
+                            var tbl = tables[0].table;
+                            var vals = tbl["ths_turnover_ratio_index"] || [];
+                            var dates = tables[0].time || [];
+                            var hasValid = false;
+                            var parsed = vals.map(function (v) {
+                                if (v === null || v === "null" || (typeof v === "number" && isNaN(v))) return null;
+                                hasValid = true;
+                                return v;
+                            });
+                            if (!hasValid) return { dates: [], turnover_ratio: [] };
+                            return { dates: dates, turnover_ratio: parsed };
+                        });
                 }
                 return fetch(AppConfig.PROXY_BASE + "/api/proxy/turnover", {
                     method: "POST",
@@ -318,45 +376,28 @@ var Fetch = (function () {
     function fetchRSI(ifindCode, startDate, endDate) {
         return cachedRangeFetch("rsi2", ifindCode, startDate, endDate,
             function (requestStart, requestEnd) {
-                if (IS_ANDROID) {
-                    return new Promise(function (resolve) {
-                try {
-                    var raw = Android.fetchDateSequence(
-                        ifindCode, "ths_rsi_index", requestStart, requestEnd,
-                        JSON.stringify(["6", "100"])
-                    );
-                    var data = JSON.parse(raw);
-                    if (data.error) {
-                        resolve({ dates: [], rsi: [] });
-                        return;
-                    }
-                    var tables = data.tables || [];
-                    if (tables.length === 0 || !tables[0].table) {
-                        resolve({ dates: [], rsi: [] });
-                        return;
-                    }
-                    var tbl = tables[0].table;
-                    var rsiVals = tbl["ths_rsi_index"] || [];
-                    var dates = tables[0].time || [];
-
-                    // 检查是否有有效值
-                    var hasValid = false;
-                    var parsed = rsiVals.map(function (v) {
-                        if (v === null || v === "null" || (typeof v === "number" && isNaN(v))) return null;
-                        hasValid = true;
-                        return v;
-                    });
-
-                    if (!hasValid) {
-                        resolve({ dates: [], rsi: [] });
-                        return;
-                    }
-
-                    resolve({ dates: dates, rsi: parsed });
-                } catch (e) {
-                    resolve({ dates: [], rsi: [] });
-                }
-                    });
+                if (IS_ANDROID && window.__ifindCall) {
+                    return window.__ifindCall("fetchDateSequence",
+                        [ifindCode, "ths_rsi_index", requestStart, requestEnd,
+                        JSON.stringify(["6", "100"])])
+                        .then(function (data) {
+                            if (!data || data.error) return { dates: [], rsi: [] };
+                            var tables = data.tables || [];
+                            if (tables.length === 0 || !tables[0].table) {
+                                return { dates: [], rsi: [] };
+                            }
+                            var tbl = tables[0].table;
+                            var rsiVals = tbl["ths_rsi_index"] || [];
+                            var dates = tables[0].time || [];
+                            var hasValid = false;
+                            var parsed = rsiVals.map(function (v) {
+                                if (v === null || v === "null" || (typeof v === "number" && isNaN(v))) return null;
+                                hasValid = true;
+                                return v;
+                            });
+                            if (!hasValid) return { dates: [], rsi: [] };
+                            return { dates: dates, rsi: parsed };
+                        });
                 }
                 return fetch(AppConfig.PROXY_BASE + "/api/proxy/rsi", {
                     method: "POST",
