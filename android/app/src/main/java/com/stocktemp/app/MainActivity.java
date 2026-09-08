@@ -831,8 +831,8 @@ public class MainActivity extends AppCompatActivity {
                 File f = cacheFile(key);
                 if (!f.exists() || f.length() > 64L * 1024 * 1024) return "";
                 byte[] buf = new byte[(int) f.length()];
+                int off = 0;
                 try (FileInputStream in = new FileInputStream(f)) {
-                    int off = 0;
                     while (off < buf.length) {
                         int n = in.read(buf, off, buf.length - off);
                         if (n < 0) break;
