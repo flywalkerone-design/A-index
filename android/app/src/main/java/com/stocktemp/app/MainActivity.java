@@ -357,20 +357,21 @@ public class MainActivity extends AppCompatActivity {
         private void postResult(String cbId, String resultJson) {
             if (cbId == null || cbId.isEmpty()) return;
             final String safeId = cbId.replaceAll("[^A-Za-z0-9_]", "_");
-            final String text = resultJson == null ? "" : resultJson;
-            final String payload;
+            String text = resultJson == null ? "" : resultJson;
+            String payload;
             try {
                 payload = JSONObject.quote(text);
             } catch (Exception qe) {
                 // 兜底转义（极少触发）
                 payload = "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
             }
+            final String finalPayload = payload;
             mainHandler.post(new Runnable() {
                 @Override
                 public void run() {
                     if (webView != null) {
                         webView.evaluateJavascript(
-                            "window.__ifindOnResult&&window.__ifindOnResult('" + safeId + "'," + payload + ");",
+                            "window.__ifindOnResult&&window.__ifindOnResult('" + safeId + "'," + finalPayload + ");",
                             null);
                     }
                 }
